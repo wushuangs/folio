@@ -1,0 +1,9 @@
+.git
+.venv
+.env.local
+data
+web/node_modules
+web/.next
+**/__pycache__
+.pytest_cache
+output
