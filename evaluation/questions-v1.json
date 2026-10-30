@@ -1,0 +1,264 @@
+[
+  {
+    "id": "sensor-order",
+    "question": "传感器曲线的电阻采样点应该按什么顺序录入？",
+    "pages": [
+      79
+    ],
+    "evidence": [
+      "从小到大"
+    ],
+    "category": "步骤",
+    "history": []
+  },
+  {
+    "id": "sensor-switch",
+    "question": "传感器只有报警开关，曲线类型应该怎样选择？",
+    "pages": [
+      79
+    ],
+    "evidence": [
+      "无"
+    ],
+    "category": "条件",
+    "history": []
+  },
+  {
+    "id": "sensor-none",
+    "question": "传感器设置为无以后，原来的传感器曲线还生效吗？",
+    "pages": [
+      79
+    ],
+    "evidence": [
+      "不起作用"
+    ],
+    "category": "条件",
+    "history": []
+  },
+  {
+    "id": "nel-trip",
+    "question": "非重要负载自动切除时，三路负载按什么顺序跳闸？",
+    "pages": [
+      84
+    ],
+    "evidence": [
+      "NEL1",
+      "NEL2",
+      "NEL3"
+    ],
+    "category": "顺序",
+    "history": []
+  },
+  {
+    "id": "nel-connect",
+    "question": "非重要负载自动重新连接，需要满足什么功率条件，哪一路先恢复？",
+    "pages": [
+      84
+    ],
+    "evidence": [
+      "小于",
+      "NEL3"
+    ],
+    "category": "条件",
+    "history": []
+  },
+  {
+    "id": "nel-manual",
+    "question": "开启非重要负载自动跳闸和自动重连后，手动操作还有效吗？",
+    "pages": [
+      84
+    ],
+    "evidence": [
+      "手动操作仍有效"
+    ],
+    "category": "易混淆",
+    "history": []
+  },
+  {
+    "id": "redundancy-id",
+    "question": "主控制器与冗余控制器的通信标识应该设成相同还是不同？",
+    "pages": [
+      91
+    ],
+    "evidence": [
+      "相同"
+    ],
+    "category": "易混淆",
+    "history": []
+  },
+  {
+    "id": "redundancy-relay",
+    "question": "冗余系统用继电器切换调速输出，与电子电位器方案相比有什么不足？",
+    "pages": [
+      91
+    ],
+    "evidence": [
+      "中断",
+      "波动"
+    ],
+    "category": "比较",
+    "history": []
+  },
+  {
+    "id": "close-time",
+    "question": "开关设置中，合闸时间的默认值和范围分别是多少，设为零代表什么？",
+    "pages": [
+      57
+    ],
+    "evidence": [
+      "5.0",
+      "持续输出"
+    ],
+    "category": "表格",
+    "history": []
+  },
+  {
+    "id": "open-time",
+    "question": "开关设置里分闸时间默认是多少秒，零值的含义是什么？",
+    "pages": [
+      57
+    ],
+    "evidence": [
+      "3.0",
+      "持续输出"
+    ],
+    "category": "表格",
+    "history": []
+  },
+  {
+    "id": "stop-key",
+    "question": "停机模式下按住停机键超过三秒，会执行什么操作？",
+    "pages": [
+      11
+    ],
+    "evidence": [
+      "试灯"
+    ],
+    "category": "步骤",
+    "history": []
+  },
+  {
+    "id": "warning-reset",
+    "question": "控制器仅发生警告时会不会停机，信号消失后怎样复位？",
+    "pages": [
+      16
+    ],
+    "evidence": [
+      "不分闸不停机",
+      "自动复位"
+    ],
+    "category": "条件",
+    "history": []
+  },
+  {
+    "id": "battery-warning",
+    "question": "电池欠压警告在什么条件下触发，是否一直检测？",
+    "pages": [
+      18
+    ],
+    "evidence": [
+      "小于",
+      "一直检测"
+    ],
+    "category": "表格",
+    "history": []
+  },
+  {
+    "id": "dims",
+    "question": "开孔尺寸和设备外形尺寸分别是多少？请区分两者。",
+    "pages": [
+      9
+    ],
+    "evidence": [
+      "214",
+      "160",
+      "242",
+      "186",
+      "49"
+    ],
+    "category": "易混淆",
+    "history": []
+  },
+  {
+    "id": "humidity",
+    "question": "设备工作湿度允许的相对湿度范围是多少？",
+    "pages": [
+      9
+    ],
+    "evidence": [
+      "20",
+      "93"
+    ],
+    "category": "参数",
+    "history": []
+  },
+  {
+    "id": "screen",
+    "question": "显示屏的像素规格是什么，支持哪些界面语言？",
+    "pages": [
+      7
+    ],
+    "evidence": [
+      "240",
+      "128",
+      "中文",
+      "英文"
+    ],
+    "category": "参数",
+    "history": []
+  },
+  {
+    "id": "negative-warranty",
+    "question": "这款设备保修几年，寄修运费由谁承担？",
+    "pages": [],
+    "evidence": [],
+    "category": "资料不足",
+    "history": []
+  },
+  {
+    "id": "negative-order",
+    "question": "查询订单 FO20261030 的物流单号。",
+    "pages": [],
+    "evidence": [],
+    "category": "业务越界",
+    "history": []
+  },
+  {
+    "id": "negative-model",
+    "question": "HES99999 的开孔尺寸是多少？",
+    "pages": [],
+    "evidence": [],
+    "category": "未知型号",
+    "history": []
+  },
+  {
+    "id": "negative-price",
+    "question": "购买十台这款控制器能优惠多少钱？",
+    "pages": [],
+    "evidence": [],
+    "category": "资料不足",
+    "history": []
+  },
+  {
+    "id": "followup",
+    "question": "那它的开孔尺寸呢？",
+    "pages": [
+      9
+    ],
+    "evidence": [
+      "214",
+      "160"
+    ],
+    "category": "多轮",
+    "history": [
+      {
+        "role": "user",
+        "content": "HES9570 控制器的外形尺寸是多少？"
+      },
+      {
+        "role": "assistant",
+        "content": "外形尺寸为 242mm x 186mm x 49mm。"
+      }
+    ]
+  }
+]

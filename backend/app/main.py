@@ -90,13 +90,20 @@ class RequestGuard:
 
 app.add_middleware(RequestGuard)
 
+from .quality import router as quality_router
+app.include_router(quality_router)
+from .suggestions import router as suggestions_router
+app.include_router(suggestions_router)
+from .publication import router as publication_router
+app.include_router(publication_router)
+
 
 def serialize_doc(doc):
     return {key:getattr(doc,key) for key in ['id','name','size','pages','chunks','status','progress','error','created_at','active_revision','indexing_status','parser_version']} | {'vector_ready':bool(doc.embedding_signature and doc.embedding_signature==embedding_signature())}
 
 
 def serialize_message(m):
-    return {key:getattr(m,key) for key in ['id','role','content','citations','mode','elapsed_ms','status','retrieval_mode','warning']}
+    return {key:getattr(m,key) for key in ['id','role','content','citations','mode','elapsed_ms','status','retrieval_mode','warning']} | {'approved_knowledge':m.request_context.get('approved_knowledge')}
 
 
 @app.get('/api/health')
@@ -341,14 +348,25 @@ async def chat(request:Question):
         session.commit()
 
     async def generate():
-        start=time.monotonic();answer='';citations=[];mode='';retrieval_mode='';warning='';status='complete';message_id=uid();saved=False
+        start=time.monotonic();answer='';citations=[];mode='';retrieval_mode='';warning='';status='complete';message_id=uid();saved=False;approved_metadata=None
         try:
             yield event('start',{'conversation_id':cid})
             query=rewrite_query(question,history)
-            citations,retrieval_mode,warning=await retrieve(query,request.document_ids,allow_remote=request.retrieval!='keyword' and request.answer_mode!='extractive')
-            s=settings();mode='generated' if s['llm_key'] and s['llm_model'] and request.answer_mode!='extractive' else 'extractive'
-            yield event('sources',{'citations':citations,'mode':mode,'retrieval_mode':retrieval_mode,'warning':warning,'query':query})
-            if not citations:
+            from .publication import exact_approved_answer
+            exact = await asyncio.to_thread(exact_approved_answer,query,request.document_ids) if request.answer_mode!='extractive' else None
+            if exact:
+                citations=exact['citations']
+                approved_metadata=exact['metadata']
+                mode,retrieval_mode='approved','approved'
+            else:
+                citations,retrieval_mode,warning=await retrieve(query,request.document_ids,allow_remote=request.retrieval!='keyword' and request.answer_mode!='extractive',include_approved=request.answer_mode!='extractive')
+                s=settings();mode='generated' if s['llm_key'] and s['llm_model'] and request.answer_mode!='extractive' else 'extractive'
+            yield event('sources',{'citations':citations,'mode':mode,'retrieval_mode':retrieval_mode,'warning':warning,'query':query,'approved_knowledge':approved_metadata})
+            if exact:
+                # 完全匹配时直接返回审核版本，保留原始引用编号与内容，不再调用模型改写。
+                answer=exact['answer']
+                yield event('delta',{'text':answer})
+            elif not citations:
                 answer='### 资料不足\n\n当前知识库没有找到足够相关的依据。请补充具体参数名称、型号或故障现象。'
                 mode='no_evidence'
                 yield event('delta',{'text':answer})
@@ -370,20 +388,20 @@ async def chat(request:Question):
                 yield event('replace',{'content':answer,'citations':citations,'mode':mode,'warning':warning})
             elapsed=int((time.monotonic()-start)*1000)
             with Session() as session:
-                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content=answer,citations=citations,mode=mode,elapsed_ms=elapsed,status=status,retrieval_mode=retrieval_mode,warning=warning))
+                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content=answer,citations=citations,mode=mode,elapsed_ms=elapsed,status=status,retrieval_mode=retrieval_mode,warning=warning,request_context={'question':question,'document_ids':request.document_ids,'history':history,'approved_knowledge':approved_metadata}))
                 session.commit()
             saved=True
-            yield event('done',{'message_id':message_id,'elapsed_ms':elapsed,'mode':mode,'warning':warning,'retrieval_mode':retrieval_mode})
+            yield event('done',{'message_id':message_id,'elapsed_ms':elapsed,'mode':mode,'warning':warning,'retrieval_mode':retrieval_mode,'approved_knowledge':approved_metadata})
         except asyncio.CancelledError:
             if saved:
                 raise
             with Session() as session:
-                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content='生成已取消，可重新提问。',citations=[],mode='cancelled',status='cancelled',retrieval_mode=retrieval_mode,warning=warning));session.commit()
+                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content='生成已取消，可重新提问。',citations=[],mode='cancelled',status='cancelled',retrieval_mode=retrieval_mode,warning=warning,request_context={'question':question,'document_ids':request.document_ids,'history':history,'approved_knowledge':approved_metadata}));session.commit()
             raise
         except Exception as exc:
             error=str(exc) if isinstance(exc,ProviderError) else '处理失败，请稍后重试。'
             with Session() as session:
-                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content=error,citations=[],mode='error',status='error',retrieval_mode=retrieval_mode,warning=warning));session.commit()
+                session.add(Message(id=message_id,conversation_id=cid,role='assistant',content=error,citations=[],mode='error',status='error',retrieval_mode=retrieval_mode,warning=warning,request_context={'question':question,'document_ids':request.document_ids,'history':history,'approved_knowledge':approved_metadata}));session.commit()
             yield event('error',{'message':error,'message_id':message_id})
         finally:
             with Session() as session:

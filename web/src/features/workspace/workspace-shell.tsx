@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowUp,
   BookOpen,
@@ -27,41 +28,24 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, readEvents } from "./api";
+import { useSuggestions } from "../knowledge/use-suggestions";
+import { PublishedKnowledgeList } from "../quality/published-knowledge-list";
+import { AnswerFeedback } from "../quality/answer-feedback";
+import { api, readEvents } from "../knowledge/api";
 import type {
   Citation,
   Conversation,
   Document,
   Health,
   Message,
-} from "./types";
+} from "../knowledge/types";
 
-const suggestions = [
-  {
-    icon: CircleHelp,
-    label: "了解产品",
-    text: "HES9570 控制器有哪些主要功能？",
-    color: "mint",
-  },
-  {
-    icon: Settings2,
-    label: "操作指南",
-    text: "如何进入参数设置界面？",
-    color: "blue",
-  },
-  {
-    icon: Search,
-    label: "排查故障",
-    text: "RS485 不能正常通信时应该检查什么？",
-    color: "peach",
-  },
-  {
-    icon: Layers3,
-    label: "查找参数",
-    text: "控制器支持哪些通信接口？",
-    color: "lavender",
-  },
-];
+const suggestionStyles = {
+  overview: { icon: CircleHelp, label: "了解内容", color: "mint" },
+  guide: { icon: Settings2, label: "操作指南", color: "blue" },
+  troubleshoot: { icon: Search, label: "排查与维护", color: "peach" },
+  parameter: { icon: Layers3, label: "查找参数", color: "lavender" },
+};
 
 function Brand({ small = false }: { small?: boolean }) {
   return (
@@ -79,7 +63,12 @@ function shortName(name: string) {
   return name.replace(/\.pdf$/i, "").replaceAll("_", " ");
 }
 
-export function Workspace() {
+export function WorkspaceShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const isChat = pathname === "/chat";
+  const isKnowledge = pathname === "/knowledge";
+  const pageTitle = isChat ? "知识问答" : isKnowledge ? "知识库" : "质量与反馈";
   const [documents, setDocuments] = useState<Document[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -125,12 +114,20 @@ export function Workspace() {
   const scope = selected.length
     ? ready.filter((d) => selected.includes(d.id))
     : ready;
+  const starters = useSuggestions(scope);
+  const suggestions = starters.items.map((item) => ({
+    ...item,
+    ...suggestionStyles[item.kind],
+  }));
   const citations =
     [...messages].reverse().find((m) => m.role === "assistant")?.citations ||
     [];
 
   function openPanel(panel: "documents" | "settings" | "help") {
-    setModal(panel);
+    if (panel === "documents") {
+      setModal(null);
+      router.push("/knowledge");
+    } else setModal(panel);
     setScopeOpen(false);
     setMobileNavOpen(false);
   }
@@ -293,6 +290,8 @@ export function Workspace() {
 
   function newChat() {
     if (busy) return;
+    router.push("/chat");
+    setModal(null);
     setMobileNavOpen(false);
     setScopeOpen(false);
     setMessages([]);
@@ -309,6 +308,7 @@ export function Workspace() {
     try {
       setMessages(await api<Message[]>(`/conversations/${id}/messages`));
       setConversationId(id);
+      router.push("/chat");
       setMobileNavOpen(false);
       setScopeOpen(false);
       setSelected(conversations.find((c) => c.id === id)?.document_ids || []);
@@ -372,6 +372,8 @@ export function Workspace() {
         if (type === "sources")
           update({
             citations: data.citations as Citation[],
+            approved_knowledge:
+              data.approved_knowledge as Message["approved_knowledge"],
             mode: data.mode as string,
             warning: data.warning as string,
             retrieval_mode: data.retrieval_mode as string,
@@ -391,6 +393,8 @@ export function Workspace() {
         }
         if (type === "done")
           update({
+            id: data.message_id as string,
+            status: "complete",
             elapsed_ms: data.elapsed_ms as number,
             mode: data.mode as string,
             warning: data.warning as string,
@@ -462,6 +466,260 @@ export function Workspace() {
     }
   }
 
+  function renderPanel(
+    panelMode: "documents" | "settings" | "help",
+    embedded = false,
+  ) {
+    return (
+      <div
+        className={embedded ? "route-content knowledge-page" : "modal-backdrop"}
+        role={embedded ? "main" : undefined}
+        onMouseDown={(e) => {
+          if (!embedded && e.target === e.currentTarget) setModal(null);
+        }}
+      >
+        <section
+          className={embedded ? "modal knowledge-page-panel" : "modal"}
+          role={embedded ? undefined : "dialog"}
+          aria-modal={embedded ? undefined : true}
+          aria-labelledby={embedded ? "knowledge-page-title" : "modal-title"}
+        >
+          <header>
+            <div>
+              <span className="eyebrow">YOUR WORKSPACE</span>
+              <h2 id={embedded ? "knowledge-page-title" : "modal-title"}>
+                {panelMode === "documents"
+                  ? "管理知识库"
+                  : panelMode === "settings"
+                    ? "模型与设置"
+                    : "开始使用 Folio"}
+              </h2>
+            </div>
+            {!embedded && (
+              <button
+                className="icon-button close-button"
+                onClick={() => setModal(null)}
+                aria-label="关闭弹窗"
+              >
+                <X size={19} />
+              </button>
+            )}
+          </header>
+          {panelMode === "documents" && (
+            <>
+              <p className="modal-description">
+                管理文档、索引版本与归档。上传和向量重建会调用已配置的模型服务；文字重建在本地处理。
+              </p>
+              <button
+                className="upload-zone"
+                disabled={uploading}
+                onClick={() => fileInput.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  void upload(e.dataTransfer.files);
+                }}
+              >
+                <Upload size={25} />
+                <strong>
+                  {uploading ? "正在上传文档…" : "点击上传，或拖入 PDF 文档"}
+                </strong>
+                <span>文字型 PDF · 单份最大 50 MB · 自动去重</span>
+              </button>
+              <label className="local-mode">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                />{" "}
+                显示已归档文档
+              </label>
+              <div className="document-list">
+                {documents
+                  .filter((d) => showArchived || d.status !== "archived")
+                  .map((d) => (
+                    <div key={d.id} className="document-row">
+                      <FileText size={23} />
+                      <div>
+                        <strong>{shortName(d.name)}</strong>
+                        <small>
+                          {d.status === "ready"
+                            ? `${d.pages} 页 · ${d.chunks} 个片段 · ${fileSize(d.size)} · ${d.vector_ready ? "混合检索" : "关键词检索"}`
+                            : d.status === "error"
+                              ? "解析失败"
+                              : d.status === "archived"
+                                ? "已归档，可恢复"
+                                : `解析入库中 · ${d.progress}%`}
+                        </small>
+                        {d.error && <p>{d.error}</p>}
+                        {versions[d.id] && (
+                          <div className="version-list">
+                            {versions[d.id].map((v) => (
+                              <button
+                                className="text-button"
+                                key={v.revision}
+                                disabled={
+                                  v.revision === d.active_revision ||
+                                  d.status === "archived" ||
+                                  ["queued", "processing"].includes(
+                                    d.indexing_status,
+                                  )
+                                }
+                                onClick={() =>
+                                  void documentAction(d.id, "rollback", {
+                                    revision: v.revision,
+                                  })
+                                }
+                              >
+                                v{v.revision} · {v.chunks}片段 ·{" "}
+                                {v.has_vectors ? "含向量" : "文字"}
+                                {v.revision === d.active_revision
+                                  ? "（当前）"
+                                  : " · 切换"}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="document-actions">
+                          <button
+                            className="text-button"
+                            onClick={() => void loadVersions(d.id)}
+                          >
+                            索引版本
+                          </button>
+                          <button
+                            className="text-button"
+                            disabled={["queued", "processing"].includes(
+                              d.indexing_status,
+                            )}
+                            onClick={() =>
+                              void documentAction(
+                                d.id,
+                                d.status === "archived" ? "restore" : "archive",
+                              )
+                            }
+                          >
+                            {d.status === "archived" ? "恢复文档" : "归档文档"}
+                          </button>
+                        </div>
+                        {["queued", "processing"].includes(
+                          d.indexing_status || d.status,
+                        ) && <progress value={d.progress} max={100} />}
+                      </div>
+                      {["ready", "error"].includes(d.status) &&
+                        !["queued", "processing"].includes(
+                          d.indexing_status,
+                        ) && (
+                          <button
+                            className="text-button"
+                            onClick={() => void reindex(d.id)}
+                          >
+                            向量重建
+                          </button>
+                        )}
+                      {["ready", "error"].includes(d.status) &&
+                        !["queued", "processing"].includes(
+                          d.indexing_status,
+                        ) && (
+                          <button
+                            className="text-button"
+                            onClick={() => void reindex(d.id, "text")}
+                          >
+                            文字重建
+                          </button>
+                        )}
+                    </div>
+                  ))}
+              </div>
+              <footer className="modal-footer">
+                <span className="document-total">
+                  {documents.filter((d) => d.status !== "archived").length}{" "}
+                  份文档
+                </span>
+                {!embedded && (
+                  <button
+                    className="button primary"
+                    onClick={() => setModal(null)}
+                  >
+                    完成 <Check size={14} />
+                  </button>
+                )}
+              </footer>
+              {embedded && <PublishedKnowledgeList />}
+            </>
+          )}
+          {panelMode === "settings" && (
+            <div className="settings-content">
+              <div className="connection-card">
+                <span
+                  className={`status-dot ${health?.generation_ready ? "green" : ""}`}
+                />
+                <div>
+                  <strong>
+                    {health?.generation_ready
+                      ? "生成式问答已配置"
+                      : "当前使用原文检索模式"}
+                  </strong>
+                  <p>
+                    {health?.generation_ready
+                      ? `回答模型：${health.model}`
+                      : "无需密钥即可查找手册原文；连接模型后，可生成带引用的回答。"}
+                  </p>
+                </div>
+              </div>
+              <h3>连接你的模型</h3>
+              <p>
+                在项目根目录打开 <code>.env.local</code>，填入智谱 GLM
+                密钥，然后重启后端。已预设官方接口，回答与向量服务可共用一个密钥。
+              </p>
+              <pre>
+                {
+                  "ZHIPU_API_KEY=你的智谱密钥\nLLM_MODEL=glm-4.7\nEMBEDDING_MODEL=embedding-3"
+                }
+              </pre>
+              <h3>可选：启用向量检索</h3>
+              <p>
+                填写智谱密钥后会启用
+                embedding-3。重启后端，再对已有文档执行“向量重建”；也可通过环境变量切换其他兼容服务。
+              </p>
+              <div className="settings-foot">
+                <ShieldCheck size={16} />
+                密钥仅在后端读取，不会返回到浏览器。
+              </div>
+            </div>
+          )}
+          {panelMode === "help" && (
+            <div className="help-content">
+              {[
+                {
+                  title: "01  连接你的知识",
+                  text: "上传文字型 PDF，系统自动提取文本并建立检索片段。扫描件需要先进行 OCR。",
+                },
+                {
+                  title: "02  用自然语言提问",
+                  text: "描述你想了解的功能、参数或故障。可以继续追问，也可以选择文档限定范围。",
+                },
+                {
+                  title: "03  回到原文验证",
+                  text: "点击回答下方的页码引用，在右侧阅读原文，并打开 PDF 查看上下文。",
+                },
+              ].map((s) => (
+                <div key={s.title}>
+                  <h3>{s.title}</h3>
+                  <p>{s.text}</p>
+                </div>
+              ))}
+              <p className="help-note">
+                当前版本面向本机单人使用。未配置模型时仅展示检索原文；扫描件
+                OCR、人工客服与业务办理不在本版范围内。
+              </p>
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`workspace ${sidebar ? "" : "sidebar-collapsed"} ${mobileNavOpen ? "mobile-nav-open" : ""}`}
@@ -496,7 +754,7 @@ export function Workspace() {
         aria-modal={compact && mobileNavOpen ? true : undefined}
       >
         <div className="sidebar-brand-row">
-          <Link className="brand" href="/" aria-label="Folio 首页">
+          <Link className="brand" href="/chat" aria-label="Folio 首页">
             <Brand />
             <span>
               folio<span className="brand-period">.</span>
@@ -522,31 +780,33 @@ export function Workspace() {
           <Plus size={17} />
           新建对话
         </button>
-        <nav className="main-nav" aria-label="主导航">
-          <button
-            className={!modal ? "active" : ""}
-            aria-current={!modal ? "page" : undefined}
-            onClick={() => {
-              setModal(null);
-              setMobileNavOpen(false);
-              textarea.current?.focus();
-            }}
-          >
-            <MessageSquare size={17} />
-            知识问答
-            <span className="nav-dot" />
-          </button>
-          <button
-            className={modal === "documents" ? "active" : ""}
-            aria-current={modal === "documents" ? "page" : undefined}
-            onClick={() => openPanel("documents")}
-          >
-            <FolderOpen size={17} />
-            知识库
-            <span className="count">
-              {documents.filter((d) => d.status !== "archived").length}
-            </span>
-          </button>
+        <nav className="main-nav" aria-label="主菜单">
+          <span className="nav-section-label">工作台</span>
+          {[
+            { href: "/chat", label: "知识问答", icon: MessageSquare },
+            { href: "/knowledge", label: "知识库", icon: FolderOpen },
+            { href: "/quality", label: "质量与反馈", icon: CheckCheck },
+          ].map(({ href, label, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className={pathname === href ? "active" : ""}
+              aria-current={pathname === href ? "page" : undefined}
+              onClick={() => {
+                setModal(null);
+                setMobileNavOpen(false);
+                setScopeOpen(false);
+              }}
+            >
+              <Icon size={17} />
+              <span>{label}</span>
+              {href === "/knowledge" && (
+                <span className="count">
+                  {documents.filter((d) => d.status !== "archived").length}
+                </span>
+              )}
+            </Link>
+          ))}
         </nav>
         <section className="conversation-navigation" aria-label="对话列表">
           <div className="conversation-heading">
@@ -640,7 +900,7 @@ export function Workspace() {
             </button>
             <div>
               <p>我的知识空间</p>
-              <h1>知识问答</h1>
+              <h1>{pageTitle}</h1>
             </div>
           </div>
           <span
@@ -666,7 +926,7 @@ export function Workspace() {
             </button>
           </div>
         )}
-        <div className="work-area">
+        <div className="work-area" hidden={!isChat}>
           <main className="chat-panel">
             <div className="scope-bar">
               <div ref={scopeRef} className="scope-control">
@@ -782,17 +1042,17 @@ export function Workspace() {
                       <strong>
                         {loading
                           ? "正在连接知识库…"
-                          : ready.length
-                            ? `${ready.length} 份文档，已准备就绪`
+                          : scope.length
+                            ? `${scope.length} 份文档，已准备就绪`
                             : "为你的知识空间添加第一份文档"}
                       </strong>
                       <span>
-                        {ready.length
-                          ? `共 ${ready.reduce((n, d) => n + d.pages, 0)} 页内容 · 随时可检索`
+                        {scope.length
+                          ? `共 ${scope.reduce((n, d) => n + d.pages, 0)} 页内容 · 随时可检索`
                           : "支持文字型 PDF · 单份最大 50 MB"}
                       </span>
                     </div>
-                    {ready.length ? (
+                    {scope.length ? (
                       <CheckCheck className="summary-ready" size={20} />
                     ) : (
                       <button
@@ -805,13 +1065,27 @@ export function Workspace() {
                     )}
                   </div>
                   <div className="suggestions-heading">
-                    <span>试着从这里开始</span>
+                    <span>
+                      {starters.loading
+                        ? "正在整理当前文档的问题…"
+                        : "试着从这里开始"}
+                    </span>
                     <span className="small-line" />
                   </div>
+                  {starters.error && <p role="status">{starters.error}</p>}
+                  {!starters.loading &&
+                    !suggestions.length &&
+                    !starters.error && (
+                      <p className="suggestions-empty">
+                        {scope.length
+                          ? "暂无合适的推荐问题，可以直接输入问题。"
+                          : "添加并选择文档后，这里会展示对应的问题。"}
+                      </p>
+                    )}
                   <div className="suggestions">
                     {suggestions.map((s) => (
                       <button
-                        key={s.label}
+                        key={`${s.document_id}-${s.text}`}
                         disabled={!scope.length || busy}
                         onClick={() => void ask(s.text)}
                       >
@@ -819,7 +1093,9 @@ export function Workspace() {
                           <s.icon size={17} />
                         </span>
                         <span>
-                          <small>{s.label}</small>
+                          <small title={s.document_name}>
+                            {s.label} · {shortName(s.document_name)}
+                          </small>
                           <strong>{s.text}</strong>
                         </span>
                         <ArrowUp size={14} />
@@ -848,9 +1124,11 @@ export function Workspace() {
                                   ? "已取消"
                                   : m.mode === "generated"
                                     ? "知识库回答"
-                                    : m.mode === "no_evidence"
-                                      ? "资料不足"
-                                      : "原文检索"}
+                                    : m.mode === "approved"
+                                      ? `已发布标准答案 · v${m.approved_knowledge?.revision ?? ""}`
+                                      : m.mode === "no_evidence"
+                                        ? "资料不足"
+                                        : "原文检索"}
                             </span>
                           )}
                         </div>
@@ -934,9 +1212,11 @@ export function Workspace() {
                               <ShieldCheck size={12} />
                               {m.error || m.status === "error"
                                 ? "回答未完成，可重新提问"
-                                : m.mode === "generated"
-                                  ? "请结合引用原文核对"
-                                  : "基于知识库原文"}
+                                : m.mode === "approved"
+                                  ? `直接采用审核版本 v${m.approved_knowledge?.revision ?? ""} · 未重新生成`
+                                  : m.mode === "generated"
+                                    ? "请结合引用原文核对"
+                                    : "基于知识库原文"}
                               {m.elapsed_ms > 0 &&
                                 ` · ${(m.elapsed_ms / 1000).toFixed(1)}s`}
                             </span>
@@ -952,6 +1232,11 @@ export function Workspace() {
                             </button>
                           </div>
                         )}
+                        {m.role === "assistant" &&
+                          !busy &&
+                          m.status === "complete" && (
+                            <AnswerFeedback messageId={m.id} />
+                          )}
                       </div>
                     </article>
                   ))}
@@ -1155,254 +1440,15 @@ export function Workspace() {
             </div>
           </aside>
         </div>
+        {!isChat &&
+          (isKnowledge ? (
+            renderPanel("documents", true)
+          ) : (
+            <div className="route-content">{children}</div>
+          ))}
       </div>
 
-      {modal && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setModal(null);
-          }}
-        >
-          <section
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-title"
-          >
-            <header>
-              <div>
-                <span className="eyebrow">YOUR WORKSPACE</span>
-                <h2 id="modal-title">
-                  {modal === "documents"
-                    ? "管理知识库"
-                    : modal === "settings"
-                      ? "模型与设置"
-                      : "开始使用 Folio"}
-                </h2>
-              </div>
-              <button
-                className="icon-button close-button"
-                onClick={() => setModal(null)}
-                aria-label="关闭弹窗"
-              >
-                <X size={19} />
-              </button>
-            </header>
-            {modal === "documents" && (
-              <>
-                <p className="modal-description">
-                  管理文档、索引版本与归档。上传和向量重建会调用已配置的模型服务；文字重建在本地处理。
-                </p>
-                <button
-                  className="upload-zone"
-                  disabled={uploading}
-                  onClick={() => fileInput.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    void upload(e.dataTransfer.files);
-                  }}
-                >
-                  <Upload size={25} />
-                  <strong>
-                    {uploading ? "正在上传文档…" : "点击上传，或拖入 PDF 文档"}
-                  </strong>
-                  <span>文字型 PDF · 单份最大 50 MB · 自动去重</span>
-                </button>
-                <label className="local-mode">
-                  <input
-                    type="checkbox"
-                    checked={showArchived}
-                    onChange={(e) => setShowArchived(e.target.checked)}
-                  />{" "}
-                  显示已归档文档
-                </label>
-                <div className="document-list">
-                  {documents
-                    .filter((d) => showArchived || d.status !== "archived")
-                    .map((d) => (
-                      <div key={d.id} className="document-row">
-                        <FileText size={23} />
-                        <div>
-                          <strong>{shortName(d.name)}</strong>
-                          <small>
-                            {d.status === "ready"
-                              ? `${d.pages} 页 · ${d.chunks} 个片段 · ${fileSize(d.size)} · ${d.vector_ready ? "混合检索" : "关键词检索"}`
-                              : d.status === "error"
-                                ? "解析失败"
-                                : d.status === "archived"
-                                  ? "已归档，可恢复"
-                                  : `解析入库中 · ${d.progress}%`}
-                          </small>
-                          {d.error && <p>{d.error}</p>}
-                          {versions[d.id] && (
-                            <div className="version-list">
-                              {versions[d.id].map((v) => (
-                                <button
-                                  className="text-button"
-                                  key={v.revision}
-                                  disabled={
-                                    v.revision === d.active_revision ||
-                                    d.status === "archived" ||
-                                    ["queued", "processing"].includes(
-                                      d.indexing_status,
-                                    )
-                                  }
-                                  onClick={() =>
-                                    void documentAction(d.id, "rollback", {
-                                      revision: v.revision,
-                                    })
-                                  }
-                                >
-                                  v{v.revision} · {v.chunks}片段 ·{" "}
-                                  {v.has_vectors ? "含向量" : "文字"}
-                                  {v.revision === d.active_revision
-                                    ? "（当前）"
-                                    : " · 切换"}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          <div className="document-actions">
-                            <button
-                              className="text-button"
-                              onClick={() => void loadVersions(d.id)}
-                            >
-                              索引版本
-                            </button>
-                            <button
-                              className="text-button"
-                              disabled={["queued", "processing"].includes(
-                                d.indexing_status,
-                              )}
-                              onClick={() =>
-                                void documentAction(
-                                  d.id,
-                                  d.status === "archived"
-                                    ? "restore"
-                                    : "archive",
-                                )
-                              }
-                            >
-                              {d.status === "archived"
-                                ? "恢复文档"
-                                : "归档文档"}
-                            </button>
-                          </div>
-                          {["queued", "processing"].includes(
-                            d.indexing_status || d.status,
-                          ) && <progress value={d.progress} max={100} />}
-                        </div>
-                        {["ready", "error"].includes(d.status) &&
-                          !["queued", "processing"].includes(
-                            d.indexing_status,
-                          ) && (
-                            <button
-                              className="text-button"
-                              onClick={() => void reindex(d.id)}
-                            >
-                              向量重建
-                            </button>
-                          )}
-                        {["ready", "error"].includes(d.status) &&
-                          !["queued", "processing"].includes(
-                            d.indexing_status,
-                          ) && (
-                            <button
-                              className="text-button"
-                              onClick={() => void reindex(d.id, "text")}
-                            >
-                              文字重建
-                            </button>
-                          )}
-                      </div>
-                    ))}
-                </div>
-                <footer className="modal-footer">
-                  <span className="document-total">
-                    {documents.filter((d) => d.status !== "archived").length}{" "}
-                    份文档
-                  </span>
-                  <button
-                    className="button primary"
-                    onClick={() => setModal(null)}
-                  >
-                    完成 <Check size={14} />
-                  </button>
-                </footer>
-              </>
-            )}
-            {modal === "settings" && (
-              <div className="settings-content">
-                <div className="connection-card">
-                  <span
-                    className={`status-dot ${health?.generation_ready ? "green" : ""}`}
-                  />
-                  <div>
-                    <strong>
-                      {health?.generation_ready
-                        ? "生成式问答已配置"
-                        : "当前使用原文检索模式"}
-                    </strong>
-                    <p>
-                      {health?.generation_ready
-                        ? `回答模型：${health.model}`
-                        : "无需密钥即可查找手册原文；连接模型后，可生成带引用的回答。"}
-                    </p>
-                  </div>
-                </div>
-                <h3>连接你的模型</h3>
-                <p>
-                  在项目根目录打开 <code>.env.local</code>，填入智谱 GLM
-                  密钥，然后重启后端。已预设官方接口，回答与向量服务可共用一个密钥。
-                </p>
-                <pre>
-                  {
-                    "ZHIPU_API_KEY=你的智谱密钥\nLLM_MODEL=glm-4.7\nEMBEDDING_MODEL=embedding-3"
-                  }
-                </pre>
-                <h3>可选：启用向量检索</h3>
-                <p>
-                  填写智谱密钥后会启用
-                  embedding-3。重启后端，再对已有文档执行“向量重建”；也可通过环境变量切换其他兼容服务。
-                </p>
-                <div className="settings-foot">
-                  <ShieldCheck size={16} />
-                  密钥仅在后端读取，不会返回到浏览器。
-                </div>
-              </div>
-            )}
-            {modal === "help" && (
-              <div className="help-content">
-                {[
-                  {
-                    title: "01  连接你的知识",
-                    text: "上传文字型 PDF，系统自动提取文本并建立检索片段。扫描件需要先进行 OCR。",
-                  },
-                  {
-                    title: "02  用自然语言提问",
-                    text: "描述你想了解的功能、参数或故障。可以继续追问，也可以选择文档限定范围。",
-                  },
-                  {
-                    title: "03  回到原文验证",
-                    text: "点击回答下方的页码引用，在右侧阅读原文，并打开 PDF 查看上下文。",
-                  },
-                ].map((s) => (
-                  <div key={s.title}>
-                    <h3>{s.title}</h3>
-                    <p>{s.text}</p>
-                  </div>
-                ))}
-                <p className="help-note">
-                  当前版本面向本机单人使用。未配置模型时仅展示检索原文；扫描件
-                  OCR、人工客服与业务办理不在本版范围内。
-                </p>
-              </div>
-            )}
-          </section>
-        </div>
-      )}
+      {modal && renderPanel(modal)}
     </div>
   );
 }

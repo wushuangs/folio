@@ -102,10 +102,48 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[list] = mapped_column(JSON, default=list)
     mode: Mapped[str] = mapped_column(String(24), default='')
+    request_context: Mapped[dict] = mapped_column(JSON, default=dict, server_default='{}')
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default='complete', server_default='complete')
     retrieval_mode: Mapped[str] = mapped_column(String(20), default='', server_default='')
     warning: Mapped[str] = mapped_column(Text, default='', server_default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AnswerFeedback(Base):
+    __tablename__ = 'answer_feedback'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    message_id: Mapped[str] = mapped_column(ForeignKey('messages.id'), unique=True)
+    rating: Mapped[str] = mapped_column(String(16))
+    category: Mapped[str] = mapped_column(String(24), default='')
+    comment: Mapped[str] = mapped_column(Text, default='')
+    status: Mapped[str] = mapped_column(String(20), default='open')
+    resolution: Mapped[str] = mapped_column(Text, default='')
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    verification: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PublishedKnowledge(Base):
+    __tablename__ = 'published_knowledge'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    feedback_id: Mapped[str] = mapped_column(ForeignKey('answer_feedback.id'), unique=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default='published')
+    review_note: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PublicationEvent(Base):
+    __tablename__ = 'publication_events'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    knowledge_id: Mapped[str] = mapped_column(ForeignKey('published_knowledge.id'), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    snapshot: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -152,7 +190,7 @@ def init_db():
     additions = {
         'documents': {'active_revision': "INTEGER NOT NULL DEFAULT 0", 'indexing_status': "VARCHAR(20) NOT NULL DEFAULT 'idle'", 'parser_version': "VARCHAR(30) NOT NULL DEFAULT 'legacy'"},
         'chunks': {'revision': 'INTEGER NOT NULL DEFAULT 0', 'kind': "VARCHAR(20) NOT NULL DEFAULT 'body'", 'context': "TEXT NOT NULL DEFAULT ''", 'group_key': "VARCHAR(80) NOT NULL DEFAULT ''", 'search_terms': "TEXT NOT NULL DEFAULT ''"},
-        'messages': {'status': "VARCHAR(20) NOT NULL DEFAULT 'complete'", 'retrieval_mode': "VARCHAR(20) NOT NULL DEFAULT ''", 'warning': "TEXT NOT NULL DEFAULT ''"},
+        'messages': {'request_context': "JSON NOT NULL DEFAULT '{}'", 'status': "VARCHAR(20) NOT NULL DEFAULT 'complete'", 'retrieval_mode': "VARCHAR(20) NOT NULL DEFAULT ''", 'warning': "TEXT NOT NULL DEFAULT ''"},
         'conversations': {'document_ids': "JSON NOT NULL DEFAULT '[]'"},
     }
     inspector = inspect(engine)

@@ -14,3 +14,8 @@ output/
 *.tsbuildinfo
 .pnpm-store/
 web/next-env.d.ts
+
+# Keep development notes local; only README.md files belong in the repository.
+local-docs/
+*.md
+!README.md

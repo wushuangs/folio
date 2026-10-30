@@ -199,7 +199,8 @@ button:not(:disabled):hover {
   flex-direction: column;
   gap: 5px;
 }
-.main-nav button {
+.main-nav button,
+.main-nav a {
   background: transparent;
   border-radius: 7px;
   color: #778273;
@@ -210,17 +211,11 @@ button:not(:disabled):hover {
   font-size: 12px;
   text-align: left;
 }
-.main-nav button.active {
+.main-nav button.active,
+.main-nav a.active {
   background: #e2e9db;
   color: #375d43;
   font-weight: 600;
-}
-.nav-dot {
-  height: 5px;
-  width: 5px;
-  background: #61835c;
-  border-radius: 50%;
-  margin-left: auto;
 }
 .count {
   font-size: 10px;
@@ -1957,7 +1952,8 @@ h1 > span {
 }
 
 /* 提高主要操作与阅读内容的可读性。 */
-.main-nav button {
+.main-nav button,
+.main-nav a {
   font-size: 13px;
 }
 .new-chat {
@@ -2600,4 +2596,185 @@ h1 > span {
     margin-top: 22px;
     margin-bottom: 22px;
   }
+}
+
+/* Shared workspace route content */
+.work-area[hidden] {
+  display: none;
+}
+.route-content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.nav-section-label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  padding: 4px 11px 9px;
+}
+.main-nav a {
+  text-decoration: none;
+}
+.knowledge-page {
+  padding: 28px 32px;
+}
+.knowledge-page-panel.modal {
+  width: 100%;
+  max-width: 1120px;
+  max-height: none;
+  overflow: visible;
+  box-shadow: none;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+@media (max-width: 700px) {
+  .knowledge-page {
+    padding: 16px 12px;
+  }
+  .knowledge-page-panel.modal {
+    padding: 20px 16px;
+  }
+}
+
+.main-nav .count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.suggestions small {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggestions-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Align every workspace content frame with the chat frame. */
+.knowledge-page {
+  padding: 0 32px 25px;
+}
+.knowledge-page-panel.modal {
+  max-width: none;
+  border-color: #e2e7db;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px #2f493404;
+}
+.folio-select {
+  position: relative;
+  min-width: 130px;
+}
+.folio-select .folio-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 8px 11px;
+  border: 1px solid #dfe5d9;
+  border-radius: 8px;
+  background: #fdfefb;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.folio-select-trigger[aria-expanded="true"] {
+  border-color: #789b82;
+  box-shadow: 0 0 0 3px #3468540c;
+}
+.folio-select-trigger svg {
+  color: #8a998d;
+  transition: transform 0.15s;
+}
+.folio-select-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.folio-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  padding: 5px;
+  border: 1px solid #e1e7dc;
+  border-radius: 10px;
+  background: #fdfefb;
+  box-shadow: 0 8px 26px #263b3717;
+  z-index: 30;
+}
+.folio-select-menu [role="option"] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 9px;
+  border-radius: 6px;
+  gap: 16px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.folio-select-menu [role="option"].highlighted {
+  background: #f0f4ec;
+}
+.folio-select-menu [aria-selected="true"] {
+  color: var(--green);
+  font-weight: 600;
+}
+@media (max-width: 700px) {
+  .knowledge-page {
+    padding: 0 12px 14px;
+  }
+}
+
+.approved-knowledge-list {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.approved-knowledge-list h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 15px;
+  color: var(--green);
+  font-weight: 500;
+}
+.approved-knowledge-list > p {
+  color: #83907f;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.approved-knowledge-list details {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.approved-knowledge-list summary {
+  cursor: pointer;
+  line-height: 1.8;
+}
+.approved-knowledge-list summary span {
+  color: #889c7f;
+  margin-left: 12px;
+  font-size: 11px;
+}
+.approved-knowledge-list .approved-answer {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+.approved-knowledge-list > a {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--green);
 }

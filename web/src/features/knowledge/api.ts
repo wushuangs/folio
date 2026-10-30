@@ -8,7 +8,14 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(
       typeof error?.detail === "string"
         ? error.detail
-        : `请求失败（${response.status}）`,
+        : Array.isArray(error?.detail)
+          ? error.detail
+              .map(
+                (item: { loc?: string[]; msg?: string }) =>
+                  `${item.loc?.slice(1).join(".") || "输入"}: ${item.msg || "格式不正确"}`,
+              )
+              .join("；")
+          : `请求失败（${response.status}）`,
     );
   }
   return response.json() as Promise<T>;

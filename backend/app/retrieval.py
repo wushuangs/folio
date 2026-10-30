@@ -110,7 +110,7 @@ def _vector_candidates(vector,document_ids,signature):
         return list(session.execute(statement.order_by(similarity.desc()).limit(32)))
 
 
-async def retrieve(question: str,document_ids: list[str],limit=6,allow_remote=True):
+async def _retrieve_documents(question: str,document_ids: list[str],limit=6,allow_remote=True):
     scope=tuple(sorted(set(document_ids)))
     rows=await asyncio.to_thread(_corpus,scope,_epoch)
     if not rows:
@@ -163,3 +163,19 @@ async def retrieve(question: str,document_ids: list[str],limit=6,allow_remote=Tr
         if len(selected)>=limit:
             break
     return selected,mode,warning
+
+
+async def retrieve(question: str, document_ids: list[str], limit=6, allow_remote=True, include_approved=True):
+    from .publication import retrieve_approved
+    approved = await asyncio.to_thread(retrieve_approved, question, document_ids, limit) if include_approved else []
+    hits,mode,warning = await _retrieve_documents(question,document_ids,limit,allow_remote)
+    approved_chunks={hit['chunk_id'] for hit in approved}
+    combined=approved+[hit for hit in hits if hit['chunk_id'] not in approved_chunks]
+    result=[]
+    total=0
+    for hit in combined:
+        if len(result)>=limit or total+len(hit['content'])>10000:
+            continue
+        total+=len(hit['content'])
+        result.append(dict(hit,id=len(result)+1))
+    return result, mode, warning

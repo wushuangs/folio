@@ -13,6 +13,8 @@ export type Document = {
   created_at: string;
 };
 export type Citation = {
+  kind?: string;
+  revision?: number;
   id: number;
   chunk_id: string;
   document_id: string;
@@ -33,6 +35,12 @@ export type Message = {
   warning?: string;
   retrieval_mode?: string;
   status?: string;
+  approved_knowledge?: {
+    id: string;
+    revision: number;
+    question: string;
+    feedback_id: string;
+  } | null;
 };
 export type Conversation = {
   id: string;
