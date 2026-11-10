@@ -2782,6 +2782,210 @@ h1 > span {
 .parse-report {
   margin-top: 8px;
 }
+.retrieval-diagnostics {
+  margin: 22px 0 28px;
+  padding: 22px;
+  border: 1px solid #dfe8da;
+  border-radius: 12px;
+  background: #f8faf5;
+}
+.diagnostics-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  color: var(--green);
+}
+.diagnostics-heading h3 {
+  margin: 6px 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.diagnostics-heading p,
+.diagnostics-note,
+.diagnostics-hint {
+  margin: 0;
+  color: #788878;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.diagnostics-form {
+  margin-top: 18px;
+}
+.diagnostics-question,
+.diagnostics-options > div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+.diagnostics-question > span,
+.diagnostics-options > div > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.diagnostics-question input {
+  width: 100%;
+  min-height: 41px;
+  padding: 10px 12px;
+  border: 1px solid #dfe5d9;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+.diagnostics-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+.diagnostics-options .folio-select {
+  min-width: 0;
+}
+.diagnostics-options .folio-select-trigger span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.diagnostics-run {
+  min-height: 36px;
+  white-space: nowrap;
+}
+.diagnostics-result {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e0e8dc;
+}
+.diagnostics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.diagnostics-summary strong {
+  margin-right: 4px;
+  font-size: 14px;
+}
+.diagnostics-summary span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e9f1e8;
+  color: #55775d;
+  font-size: 11px;
+}
+.diagnostics-query {
+  margin: 12px 0 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.diagnostics-error {
+  margin: 9px 0;
+  color: #a34e3a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.diagnostics-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 16px 0 10px;
+  border-bottom: 1px solid #e0e8dc;
+}
+.diagnostics-tabs button {
+  padding: 9px 10px;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  color: #778a77;
+  font-size: 12px;
+}
+.diagnostics-tabs button.active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+  font-weight: 600;
+}
+.diagnostics-tabs span {
+  margin-left: 5px;
+  color: #9aab98;
+  font-variant-numeric: tabular-nums;
+}
+.diagnostics-list {
+  display: grid;
+  gap: 8px;
+  max-height: 510px;
+  overflow: auto;
+}
+.diagnostics-candidate {
+  padding: 13px;
+  border: 1px solid #e3e9df;
+  border-radius: 8px;
+  background: #fff;
+  min-width: 0;
+}
+.diagnostics-candidate-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.diagnostics-candidate-top strong {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diagnostics-candidate-top span {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.diagnostics-accepted {
+  color: #4c795e;
+}
+.diagnostics-rejected {
+  color: #a77751;
+}
+.diagnostics-candidate-meta {
+  margin: 7px 0;
+  color: #849084;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.diagnostics-candidate-text {
+  margin: 0;
+  color: #465b4e;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 170px;
+  overflow: auto;
+}
+.diagnostics-candidate a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 9px;
+  color: var(--green);
+  font-size: 11px;
+}
+.diagnostics-empty {
+  padding: 12px 0;
+  color: #89958a;
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .retrieval-diagnostics {
+    padding: 16px;
+  }
+  .diagnostics-options {
+    grid-template-columns: 1fr;
+  }
+  .diagnostics-candidate-top {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
 .parse-report-body {
   margin: 8px 0;
   padding: 12px;

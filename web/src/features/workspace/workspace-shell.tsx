@@ -31,6 +31,7 @@ import remarkGfm from "remark-gfm";
 import { useSuggestions } from "../knowledge/use-suggestions";
 import { Select } from "./select";
 import { ParseReport } from "../knowledge/parse-report";
+import { RetrievalDiagnostics } from "../knowledge/retrieval-diagnostics";
 import { PublishedKnowledgeList } from "../quality/published-knowledge-list";
 import { AnswerFeedback } from "../quality/answer-feedback";
 import { api, readEvents } from "../knowledge/api";
@@ -603,6 +604,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   PDF / TXT / MD / DOCX / CSV / XLSX / 图片 · 最大 50 MB
                 </span>
               </button>
+              {embedded && <RetrievalDiagnostics documents={documents} />}
               <label className="local-mode">
                 <input
                   type="checkbox"

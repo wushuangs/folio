@@ -20,7 +20,7 @@ from .ingestion import enqueue, worker
 from .documents import FORMATS, source_path, validate_file
 from .ocr import capabilities as ocr_capabilities
 from .providers import ProviderError, probe_connection, stream_answer
-from .retrieval import invalidate_cache, retrieve
+from .retrieval import diagnose, invalidate_cache, retrieve
 from .answer_policy import validate_response
 from .conversation_context import prompt_context, rewrite_query, select_history
 
@@ -273,6 +273,43 @@ def original(document_id:str):
         if not doc or not source_path(doc).exists():
             raise HTTPException(404,'文档不存在。')
         return FileResponse(source_path(doc),media_type='application/pdf' if doc.file_type=='pdf' else 'application/octet-stream',filename=doc.name,content_disposition_type='inline' if doc.file_type=='pdf' else 'attachment')
+
+
+class RetrievalDiagnosisRequest(BaseModel):
+    question:str=Field(min_length=1,max_length=500)
+    document_ids:list[str]=Field(default_factory=list,max_length=100)
+    retrieval:Literal['hybrid','keyword']='hybrid'
+
+
+@app.post('/api/retrieval/diagnose')
+async def retrieval_diagnosis(request:RetrievalDiagnosisRequest):
+    question=request.question.strip()
+    if not question:
+        raise HTTPException(422,'请输入问题。')
+    with Session() as session:
+        if request.document_ids:
+            found=set(session.scalars(select(Document.id).where(Document.id.in_(request.document_ids),Document.status=='ready')))
+            if found!=set(request.document_ids):
+                raise HTTPException(409,'部分文档不可查询，请刷新文档范围。')
+    query=rewrite_query(question,[])
+    from .publication import exact_approved_answer
+    exact=await asyncio.to_thread(exact_approved_answer,question,request.document_ids)
+    if exact:
+        return {'question':question,'query':query,'answer_path':'published_exact',
+                'retrieval_mode':'approved','warning':'',
+                'published':exact['metadata'],
+                'trace':{'corpus_chunks':0,'scope_document_ids':request.document_ids,
+                         'lexical':[],'vector':[],'fusion':[],'timings_ms':{},
+                         'vector_state':'skipped','approved':[],
+                         'final':[{'id':source['id'],'chunk_id':source['chunk_id'],
+                                   'document_id':source['document_id'],
+                                   'document_name':source['document_name'],'page':source['page'],
+                                   'heading':source['heading'],'kind':'approved_qa',
+                                   'content':source['content'][:1200]}
+                                  for source in exact['citations']]}}
+    mode,warning,trace=await diagnose(query,request.document_ids,request.retrieval=='hybrid')
+    return {'question':question,'query':query,'answer_path':'retrieval',
+            'retrieval_mode':mode,'warning':warning,'published':None,'trace':trace}
 
 
 @app.get('/api/conversations')

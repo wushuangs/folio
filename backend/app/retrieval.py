@@ -2,6 +2,7 @@ import asyncio
 import json
 import math
 import re
+import time
 from collections import Counter
 from functools import lru_cache
 
@@ -110,28 +111,50 @@ def _vector_candidates(vector,document_ids,signature):
         return list(session.execute(statement.order_by(similarity.desc()).limit(32)))
 
 
-async def _retrieve_documents(question: str,document_ids: list[str],limit=6,allow_remote=True):
+def _diagnostic_hit(rows,index):
+    chunk,doc=rows[index]
+    return {'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,
+            'revision':doc.active_revision,'page':chunk.page,'heading':chunk.heading,
+            'content':chunk.content[:1200]}
+
+
+async def _retrieve_documents(question: str,document_ids: list[str],limit=6,allow_remote=True,diagnostics=False):
+    started=time.perf_counter()
     scope=tuple(sorted(set(document_ids)))
     rows=await asyncio.to_thread(_corpus,scope,_epoch)
+    trace={'corpus_chunks':len(rows),'scope_document_ids':list(scope),'lexical':[],
+           'vector':[],'fusion':[],'timings_ms':{},'vector_state':'disabled'} if diagnostics else None
     if not rows:
-        return [],'keyword',''
+        return [],'keyword','',trace
     chunks=[r[0] for r in rows]
     query_codes=set(re.findall(r'[a-z][a-z0-9]*(?:[_.-][a-z0-9]+)*',normalize(question)))
     query_codes-={'what','how','which','when','does','can','is','are','the','of','to','in','for','and','or','with','on','at','why','tell','me','please','support','supported'}
     if query_codes:
         vocabulary=await asyncio.to_thread(_stats,tuple((c.heading or '')+' '+c.content for c in chunks))
         if any(len(code)>=3 and code not in vocabulary[1] for code in query_codes):
-            return [],'keyword','资料未出现问题中的型号或协议名称，请核对名称后重试。'
+            if diagnostics:
+                trace['block_reason']='问题中的型号或协议名称未出现在已选文档中。'
+            return [],'keyword','资料未出现问题中的型号或协议名称，请核对名称后重试。',trace
+    lexical_started=time.perf_counter()
     fts_ids=set(await asyncio.to_thread(_fts_candidates,question,scope))
     # 兼容尚未升级的旧库；现代索引从FTS候选进入本地词法重排。
     indices=[i for i,c in enumerate(chunks) if c.id in fts_ids] if fts_ids else list(range(len(chunks)))
     local=await asyncio.to_thread(lexical_rank,question,[chunks[i] for i in indices])
     lexical=[(indices[i],score) for i,score in local[:40] if score >= local[0][1]*.45]
     fusion={i:1.5/(60+rank) for rank,(i,_) in enumerate(lexical,1)}
+    if diagnostics:
+        included={i for i,_ in lexical}
+        trace['fts_candidates']=len(fts_ids)
+        trace['lexical_candidates']=len(indices)
+        trace['lexical']=[_diagnostic_hit(rows,indices[i]) |
+                          {'rank':rank,'score':round(score,5),'included':indices[i] in included}
+                          for rank,(i,score) in enumerate(local[:30],1)]
+        trace['timings_ms']['lexical']=round((time.perf_counter()-lexical_started)*1000)
     mode,warning='keyword',''
     signature=embedding_signature()
     eligible=signature and any(doc.embedding_signature==signature for _,doc in rows)
     if allow_remote and eligible:
+        vector_started=time.perf_counter()
         try:
             vector=(await embed([question]))[0]
             vector_hits=await asyncio.to_thread(_vector_candidates,vector,scope,signature)
@@ -142,33 +165,61 @@ async def _retrieve_documents(question: str,document_ids: list[str],limit=6,allo
                     continue
                 index=lookup[cid]
                 shared=any(term in normalize(chunks[index].content) for term in focus)
-                if similarity>=.45 and (shared or similarity>=.78):
+                accepted=similarity>=.45 and (shared or similarity>=.78)
+                if diagnostics and rank<=30:
+                    trace['vector'].append(_diagnostic_hit(rows,index) |
+                                           {'rank':rank,'similarity':round(similarity,5),
+                                            'included':accepted,
+                                            'reason':('参与融合' if accepted else
+                                                      '相似度不足' if similarity<.45 else
+                                                      '缺少问题关键内容且相似度未达到高置信阈值')})
+                if accepted:
                     fusion[index]=fusion.get(index,0)+1/(60+rank)
             mode='hybrid'
+            if diagnostics:
+                trace['vector_state']='used'
         except ProviderError as exc:
             warning=str(exc)+' 已降级为关键词检索。'
+            if diagnostics:
+                trace['vector_state']='failed'
+        if diagnostics:
+            trace['timings_ms']['vector']=round((time.perf_counter()-vector_started)*1000)
     elif signature and not eligible:
         warning='当前文档尚无匹配的向量索引，使用关键词检索。'
+        if diagnostics and allow_remote:
+            trace['vector_state']='index_unavailable'
+    elif diagnostics and allow_remote:
+        trace['vector_state']='not_configured'
     selected,seen,total=[],set(),0
-    for index in sorted(fusion,key=lambda i:fusion[i],reverse=True):
+    fusion_started=time.perf_counter()
+    for rank,index in enumerate(sorted(fusion,key=lambda i:fusion[i],reverse=True),1):
         chunk,doc=rows[index]
         key=(doc.id,chunk.group_key or chunk.id)
+        reason=''
         if key in seen:
-            continue
-        context=chunk.context or chunk.content
-        if total+len(context)>7000:
-            continue
-        seen.add(key);total+=len(context)
-        selected.append({'id':len(selected)+1,'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,'file_type':doc.file_type,'page':chunk.page,'heading':chunk.heading,'content':context,'matched_content':chunk.content,'kind':chunk.kind,'revision':doc.active_revision,'score':round(fusion[index],5)})
-        if len(selected)>=limit:
+            reason='同组片段已选入'
+        else:
+            context=chunk.context or chunk.content
+            if total+len(context)>7000:
+                reason='超出原文上下文长度上限'
+            elif len(selected)>=limit:
+                reason='超过引用条数上限'
+            else:
+                seen.add(key);total+=len(context)
+                selected.append({'id':len(selected)+1,'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,'file_type':doc.file_type,'page':chunk.page,'heading':chunk.heading,'content':context,'matched_content':chunk.content,'kind':chunk.kind,'revision':doc.active_revision,'score':round(fusion[index],5)})
+        if diagnostics and rank<=30:
+            trace['fusion'].append(_diagnostic_hit(rows,index) |
+                                   {'rank':rank,'score':round(fusion[index],5),
+                                    'selected':not reason,'reason':reason or '进入文档候选'})
+        if len(selected)>=limit and (not diagnostics or rank>=30):
             break
-    return selected,mode,warning
+    if diagnostics:
+        trace['timings_ms']['fusion']=round((time.perf_counter()-fusion_started)*1000)
+        trace['timings_ms']['total']=round((time.perf_counter()-started)*1000)
+    return selected,mode,warning,trace
 
 
-async def retrieve(question: str, document_ids: list[str], limit=6, allow_remote=True, include_approved=True):
-    from .publication import retrieve_approved
-    approved = await asyncio.to_thread(retrieve_approved, question, document_ids, limit) if include_approved else []
-    hits,mode,warning = await _retrieve_documents(question,document_ids,limit,allow_remote)
+def _merge_results(approved,hits,limit):
     approved_chunks={hit['chunk_id'] for hit in approved}
     combined=approved+[hit for hit in hits if hit['chunk_id'] not in approved_chunks]
     result=[]
@@ -178,4 +229,24 @@ async def retrieve(question: str, document_ids: list[str], limit=6, allow_remote
             continue
         total+=len(hit['content'])
         result.append(dict(hit,id=len(result)+1))
-    return result, mode, warning
+    return result
+
+
+async def retrieve(question: str, document_ids: list[str], limit=6, allow_remote=True, include_approved=True):
+    from .publication import retrieve_approved
+    approved = await asyncio.to_thread(retrieve_approved, question, document_ids, limit) if include_approved else []
+    hits,mode,warning,_ = await _retrieve_documents(question,document_ids,limit,allow_remote)
+    return _merge_results(approved,hits,limit), mode, warning
+
+
+async def diagnose(question: str, document_ids: list[str], allow_remote=True):
+    from .publication import retrieve_approved
+    approved=await asyncio.to_thread(retrieve_approved,question,document_ids,6)
+    hits,mode,warning,trace=await _retrieve_documents(question,document_ids,6,allow_remote,diagnostics=True)
+    final=_merge_results(approved,hits,6)
+    trace['approved']=[{'chunk_id':hit['chunk_id'],'document_id':hit['document_id'],'document_name':hit['document_name'],
+                        'page':hit['page'],'heading':hit['heading']} for hit in approved]
+    trace['final']=[{'id':hit['id'],'chunk_id':hit['chunk_id'],'document_id':hit['document_id'],'document_name':hit['document_name'],
+                     'page':hit['page'],'heading':hit['heading'],'kind':hit['kind'],
+                     'content':hit['matched_content'][:1200]} for hit in final]
+    return mode,warning,trace
