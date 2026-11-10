@@ -159,7 +159,7 @@ async def _retrieve_documents(question: str,document_ids: list[str],limit=6,allo
         if total+len(context)>7000:
             continue
         seen.add(key);total+=len(context)
-        selected.append({'id':len(selected)+1,'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,'page':chunk.page,'heading':chunk.heading,'content':context,'matched_content':chunk.content,'kind':chunk.kind,'revision':doc.active_revision,'score':round(fusion[index],5)})
+        selected.append({'id':len(selected)+1,'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,'file_type':doc.file_type,'page':chunk.page,'heading':chunk.heading,'content':context,'matched_content':chunk.content,'kind':chunk.kind,'revision':doc.active_revision,'score':round(fusion[index],5)})
         if len(selected)>=limit:
             break
     return selected,mode,warning

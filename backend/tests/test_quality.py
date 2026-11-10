@@ -62,7 +62,8 @@ def test_verification_provider_failure_preserves_feedback(monkeypatch):
     async def fail(*args, **kwargs):
         raise ProviderError('向量服务调用受限（HTTP 429）')
     monkeypatch.setattr(quality,'retrieve',fail)
-    monkeypatch.setattr(config,'settings',lambda:{'llm_key':'mock-only'})
+    original_settings=config.settings
+    monkeypatch.setattr(config,'settings',lambda:{**original_settings(),'llm_key':'mock-only'})
     with TestClient(app) as client:
         mid=seed()
         row=client.put(f'/api/messages/{mid}/feedback',json={'rating':'problem','category':'incorrect'}).json()

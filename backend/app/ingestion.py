@@ -4,9 +4,10 @@ import hashlib
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from .config import UPLOADS, embedding_signature
+from .config import embedding_signature
 from .db import Chunk, Document, EmbeddingCache, IndexJob, Revision, Session, now, sync_fts
-from .parsing import PARSER_VERSION, parse_pdf, split_page
+from .parsing import PARSER_VERSION
+from .documents import parse_document, source_path
 from .providers import ProviderError, embed
 from .text import content_terms
 
@@ -45,7 +46,7 @@ async def ingest(document_id: str, mode='full'):
                     if doc:
                         doc.progress=5+int(current/total*55)
                         session.commit()
-        pages,parsed=await asyncio.to_thread(parse_pdf,UPLOADS/f'{document_id}.pdf',progress)
+        pages,parsed,report=await asyncio.to_thread(parse_document,source_path(doc),doc.file_type,progress)
         signature=embedding_signature() if mode=='full' else ''
         vectors=[]
         warning=''
@@ -81,10 +82,11 @@ async def ingest(document_id: str, mode='full'):
             revision=(session.scalar(select(func.max(Chunk.revision)).where(Chunk.document_id==doc.id)) or 0)+1
             for i,chunk in enumerate(parsed):
                 session.add(Chunk(document_id=doc.id,revision=revision,**chunk,search_terms=content_terms(chunk['heading']+' '+chunk['content']),embedding=vectors[i] if vectors else None))
-            session.add(Revision(document_id=doc.id,revision=revision,pages=pages,chunks=len(parsed),embedding_signature=signature,parser_version=PARSER_VERSION))
+            session.add(Revision(document_id=doc.id,revision=revision,pages=pages,chunks=len(parsed),embedding_signature=signature,parser_version=PARSER_VERSION,quality_report=report))
             doc.active_revision,doc.pages,doc.chunks=revision,pages,len(parsed)
             doc.status,doc.indexing_status,doc.progress='ready','idle',100
             doc.error,doc.embedding_signature,doc.parser_version=warning,signature,PARSER_VERSION
+            doc.quality_report=report
             session.flush()
             sync_fts(session,doc.id)
             session.commit()

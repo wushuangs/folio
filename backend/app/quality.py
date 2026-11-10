@@ -27,6 +27,7 @@ class FeedbackUpdate(BaseModel):
 
 class VerificationInput(BaseModel):
     mode: Literal['local', 'live'] = 'local'
+    model_id: str | None = Field(default=None,max_length=64)
     question: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
@@ -83,6 +84,8 @@ def submit_feedback(message_id: str, body: FeedbackInput):
                 'answer': message.content, 'citations': message.citations,
                 'conversation_id': message.conversation_id,
                 'document_ids': message.request_context.get('document_ids', list(dict.fromkeys(c['document_id'] for c in message.citations)) or conversation.document_ids),
+                'model_id': message.request_context.get('model_id','default'),
+                'model': message.request_context.get('model'),
                 'mode': message.mode, 'retrieval_mode': message.retrieval_mode,
                 'warning': message.warning,
             })
@@ -146,9 +149,13 @@ async def verify_feedback(feedback_id: str, body: VerificationInput):
         updated_at = row.updated_at
     _verifying.add(feedback_id)
     try:
-        from .main import finalize_answer, rewrite_query
-        from .config import settings
-        if body.mode == 'live' and not settings()['llm_key']:
+        from .main import finalize_answer, rewrite_query, source_location
+        from .config import resolve_model
+        try:
+            profile=resolve_model(body.model_id)
+        except ValueError as exc:
+            raise HTTPException(422,str(exc)) from exc
+        if body.mode == 'live' and not (profile['api_key'] or profile.get('local')):
             raise HTTPException(409, '未配置回答模型，请先使用本地验证。')
         question = (body.question if body.question is not None else snapshot['question']).strip()
         if not question:
@@ -159,8 +166,8 @@ async def verify_feedback(feedback_id: str, body: VerificationInput):
             hits, mode, warning = await retrieve(query, snapshot['document_ids'], allow_remote=body.mode == 'live', include_approved=False)
             answer, answer_mode = '', 'retrieval_only'
             if body.mode == 'live' and hits:
-                context = '\n\n'.join(f'[{c["id"]}] {c["document_name"]}，PDF 第 {c["page"]} 页\n{c["content"]}' for c in hits)
-                async for delta in stream_answer(question, context, history):
+                context = '\n\n'.join(f'[{c["id"]}] {c["document_name"]}，{source_location(c)}\n{c["content"]}' for c in hits)
+                async for delta in (stream_answer(question, context, history, model_id=body.model_id) if body.model_id else stream_answer(question, context, history)):
                     answer += delta
                 if not answer.strip():
                     raise ProviderError('模型返回空回答。')
@@ -171,7 +178,8 @@ async def verify_feedback(feedback_id: str, body: VerificationInput):
         result = {'checked_at': now().isoformat(), 'question': question, 'query': query, 'included_approved': False, 'requested_mode': body.mode,
                   'retrieval_mode': mode, 'answer_mode': answer_mode, 'citations': hits,
                   'answer': answer, 'warning': warning,
-                  'note': '检索命中与引用编号有效不代表答案正确，请人工核对后更新处理状态。'}
+                  'model_id': profile['id'] if body.mode=='live' else None,
+                  'note': '检索结果仅供核对。确认正确后审核发布，无需发布时填写原因关闭反馈。'}
         with Session() as session:
             row = session.get(AnswerFeedback, feedback_id)
             if row.updated_at != updated_at:
@@ -185,3 +193,48 @@ async def verify_feedback(feedback_id: str, body: VerificationInput):
         raise HTTPException(504, '验证超时，请稍后重试。')
     finally:
         _verifying.discard(feedback_id)
+
+
+@router.get('/feedback-insights')
+def feedback_insights():
+    from .text import tokens, GENERIC
+    from collections import Counter
+    with Session() as session:
+        rows=list(session.scalars(select(AnswerFeedback).where(AnswerFeedback.rating=='problem').order_by(AnswerFeedback.updated_at.desc()).limit(2000)))
+        groups=[]
+        for row in rows:
+            question=row.snapshot.get('question','')
+            terms=set(tokens(question))-GENERIC
+            scope=set(row.snapshot.get('document_ids',[]))
+            group=next((g for g in groups if g['_scope']==scope and (g['question']==question or len(g['_terms'] & terms)/max(1,len(g['_terms'] | terms))>=.55)),None)
+            if not group:
+                group={'question':question,'ids':[],'open_count':0,'categories':Counter(),'_terms':terms,'_scope':scope}
+                groups.append(group)
+            group['ids'].append(row.id)
+            group['open_count']+=row.status!='resolved'
+            group['categories'][row.category]+=1
+        return {'sample_size':len(rows),'limit':2000,'groups':[{'question':g['question'],'ids':g['ids'],'count':len(g['ids']),'open_count':g['open_count'],'categories':dict(g['categories'])} for g in sorted(groups,key=lambda g:len(g['ids']),reverse=True) if len(g['ids'])>=2], 'note':'按文档范围与词语相似度在本地归组，仅用于发现线索，不自动合并或判定根因。'}
+
+
+class BatchCloseInput(BaseModel):
+    ids: list[str] = Field(min_length=1,max_length=100)
+    reason: str = Field(min_length=1,max_length=4000)
+
+
+from .publication import serialized_publication
+
+
+@router.post('/feedback-batch-close')
+@serialized_publication
+def batch_close(body: BatchCloseInput):
+    from .db import PublishedKnowledge
+    if not body.reason.strip():raise HTTPException(422,'请填写关闭原因。')
+    with Session() as session:
+        ids=list(dict.fromkeys(body.ids))
+        rows=list(session.scalars(select(AnswerFeedback).where(AnswerFeedback.id.in_(ids))))
+        if len(rows)!=len(ids):raise HTTPException(409,'部分反馈已不存在，本批次未执行。')
+        if session.scalar(select(PublishedKnowledge.id).where(PublishedKnowledge.feedback_id.in_(ids),PublishedKnowledge.status=='published')):
+            raise HTTPException(409,'包含已发布知识，请在知识库审核维护，不能批量关闭。')
+        for row in rows:row.status,row.resolution,row.updated_at='resolved',body.reason.strip(),now()
+        session.commit()
+        return {'updated':len(rows)}

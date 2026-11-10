@@ -1,11 +1,13 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ClipboardCheck, MessageSquareText, RefreshCw } from "lucide-react";
+import { FeedbackInsights } from "./feedback-insights";
 import { KnowledgePublisher } from "./knowledge-publisher";
 import { Select } from "../workspace/select";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../knowledge/api";
+import type { Health } from "../knowledge/types";
 import { categories, statuses, type Feedback } from "./types";
 import "./quality.css";
 
@@ -19,6 +21,15 @@ export function QualityWorkspace() {
     [resolution, setResolution] = useState(""),
     [closing, setClosing] = useState(false);
   const [verifyQuestion, setVerifyQuestion] = useState("");
+  const [models, setModels] = useState<NonNullable<Health["models"]>>([]);
+  const [verifyModel, setVerifyModel] = useState("default");
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<Health>("/health", { signal: controller.signal })
+      .then((data) => setModels(data.models || []))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
   const [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
@@ -57,6 +68,22 @@ export function QualityWorkspace() {
     setClosing(false);
     setError("");
   }
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("feedback");
+    if (!id) return;
+    const controller = new AbortController();
+    void api<Feedback>(`/feedback/${encodeURIComponent(id)}`, {
+      signal: controller.signal,
+    })
+      .then((row) => {
+        if (!controller.signal.aborted) choose(row);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          setError(e instanceof Error ? e.message : "无法加载反馈");
+      });
+    return () => controller.abort();
+  }, []);
   async function closeFeedback() {
     if (
       !selected ||
@@ -93,7 +120,11 @@ export function QualityWorkspace() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode, question: verifyQuestion }),
+          body: JSON.stringify({
+            mode,
+            question: verifyQuestion,
+            model_id: verifyModel,
+          }),
         },
       );
       const updated = await api<Feedback>(`/feedback/${selected.id}`);
@@ -107,6 +138,13 @@ export function QualityWorkspace() {
   }
   return (
     <main className="quality-page">
+      <FeedbackInsights
+        onSelect={choose}
+        onChanged={() => {
+          setSelected(null);
+          void load();
+        }}
+      />
       <div className="quality-toolbar quality-filters">
         <div className="quality-filter">
           <span>反馈类型</span>
@@ -266,7 +304,7 @@ export function QualityWorkspace() {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      {c.document_name} · 第 {c.page} 页
+                      {c.document_name} · 位置 {c.page}
                     </a>
                     <p>{c.content}</p>
                   </blockquote>
@@ -287,6 +325,16 @@ export function QualityWorkspace() {
                 验证仅使用当前原始文档，不召回已发布问答，避免用自己的答案证明自己。本地验证只更新依据；模型验证会发送问题和资料到已配置服务并产生费用。不会自动覆盖标准答案。
               </p>
               <div className="quality-toolbar">
+                <Select
+                  label="验证回答模型"
+                  value={verifyModel}
+                  onChange={setVerifyModel}
+                  disabled={busy}
+                  options={models.map((model) => ({
+                    value: model.id,
+                    label: `${model.label}${model.ready ? "" : "（未配置）"}`,
+                  }))}
+                />
                 <button
                   disabled={busy || !verifyQuestion.trim()}
                   onClick={() => void verify("local")}
@@ -322,7 +370,7 @@ export function QualityWorkspace() {
                   {selected.verification.citations?.map((c) => (
                     <details key={c.chunk_id}>
                       <summary>
-                        {c.document_name} · 第 {c.page} 页
+                        {c.document_name} · 位置 {c.page}
                       </summary>
                       <p>{c.content}</p>
                     </details>
@@ -348,6 +396,13 @@ export function QualityWorkspace() {
                   });
                   setClosing(false);
                   setResolution("");
+                  void api<Feedback>(`/feedback/${selected.id}`)
+                    .then(choose)
+                    .catch((e) =>
+                      setError(
+                        e instanceof Error ? e.message : "无法刷新审核结果",
+                      ),
+                    );
                   void load();
                 }}
               />
@@ -359,11 +414,14 @@ export function QualityWorkspace() {
                     {statuses[selected.status]}
                   </span>
                   <span>
-                    {selected.publication?.status === "published"
+                    {selected.publication?.status === "published" &&
+                    selected.status === "resolved"
                       ? `已审核发布 v${selected.publication.revision}，反馈已自动解决`
                       : selected.status === "resolved"
                         ? "反馈已关闭"
-                        : "审核并发布后，反馈将自动标记为已解决。"}
+                        : selected.publication?.status === "published"
+                          ? "已有发布版本，反馈已重新打开，请核对后更新或撤回知识。"
+                          : "审核并发布后，反馈将自动标记为已解决。"}
                   </span>
                   {selected.status === "resolved" && (
                     <time dateTime={selected.updated_at}>

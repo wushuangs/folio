@@ -29,6 +29,8 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSuggestions } from "../knowledge/use-suggestions";
+import { Select } from "./select";
+import { ParseReport } from "../knowledge/parse-report";
 import { PublishedKnowledgeList } from "../quality/published-knowledge-list";
 import { AnswerFeedback } from "../quality/answer-feedback";
 import { api, readEvents } from "../knowledge/api";
@@ -75,12 +77,21 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const restoredConversation = useRef(false);
   const [question, setQuestion] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [versions, setVersions] = useState<
     Record<string, { revision: number; chunks: number; has_vectors: boolean }[]>
   >({});
   const [localOnly, setLocalOnly] = useState(false);
+  const [modelId, setModelId] = useState("default");
+  const currentModel = health?.models?.find((model) => model.id === modelId);
+  function chooseModel(value: string) {
+    setModelId(value);
+    try {
+      window.localStorage.setItem("folio.answer-model", value);
+    } catch {}
+  }
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -195,6 +206,21 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       ]);
       setDocuments(docs);
       setHealth(status);
+      let savedModel: string | null = null;
+      try {
+        savedModel = window.localStorage.getItem("folio.answer-model");
+      } catch {}
+      const available = status.models || [];
+      setModelId((current) =>
+        available.some((model) => model.id === (savedModel || current))
+          ? savedModel || current
+          : "default",
+      );
+      if (savedModel && !available.some((model) => model.id === savedModel)) {
+        try {
+          window.localStorage.setItem("folio.answer-model", "default");
+        } catch {}
+      }
       setConversations(history);
       setConnectionError("");
     } catch (e) {
@@ -212,6 +238,27 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", focus);
     };
   }, [refresh]);
+  useEffect(() => {
+    if (loading || connectionError || restoredConversation.current) return;
+    restoredConversation.current = true;
+    let savedConversation: string | null = null;
+    try {
+      savedConversation = window.localStorage.getItem("folio.conversation-id");
+    } catch {}
+    const active = conversations.find((item) => item.id === savedConversation);
+    if (active) {
+      void api<Message[]>(`/conversations/${active.id}/messages`).then(
+        (savedMessages) => {
+          setMessages(savedMessages);
+          setConversationId(active.id);
+          setSelected(active.document_ids || []);
+        },
+        () => {
+          window.localStorage.removeItem("folio.conversation-id");
+        },
+      );
+    }
+  }, [loading, connectionError, conversations]);
   const indexing = documents.some((d) =>
     ["queued", "processing"].includes(d.indexing_status || d.status),
   );
@@ -222,6 +269,17 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     }, 2000);
     return () => clearInterval(interval);
   }, [indexing, refresh]);
+  useEffect(() => {
+    if (!conversationId || !messages.some((item) => item.status === "pending"))
+      return;
+    const interval = setInterval(() => {
+      if (!document.hidden && !busy)
+        void api<Message[]>(`/conversations/${conversationId}/messages`).then(
+          setMessages,
+        );
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [conversationId, messages, busy]);
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -270,10 +328,10 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     setError("");
     try {
       for (const file of Array.from(files)) {
-        if (!file.name.toLowerCase().endsWith(".pdf"))
-          throw new Error("请选择 PDF 文件。");
+        if (!/\.(pdf|txt|md|docx|csv|xlsx|png|jpe?g|webp)$/i.test(file.name))
+          throw new Error("请选择支持的文档或图片格式。");
         if (file.size > 50 * 1024 * 1024)
-          throw new Error("单份 PDF 不能超过 50 MB。");
+          throw new Error("单份文件不能超过 50 MB。");
         const form = new FormData();
         form.append("file", file);
         await api<Document>("/documents", { method: "POST", body: form });
@@ -296,6 +354,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     setScopeOpen(false);
     setMessages([]);
     setConversationId(null);
+    try {
+      window.localStorage.removeItem("folio.conversation-id");
+    } catch {}
     setQuestion("");
     setActiveCitation(null);
     setShowPreview(false);
@@ -308,6 +369,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     try {
       setMessages(await api<Message[]>(`/conversations/${id}/messages`));
       setConversationId(id);
+      try {
+        window.localStorage.setItem("folio.conversation-id", id);
+      } catch {}
       router.push("/chat");
       setMobileNavOpen(false);
       setScopeOpen(false);
@@ -329,6 +393,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     setActiveCitation(null);
     setShowPreview(false);
     const id = crypto.randomUUID();
+    const requestId = crypto.randomUUID();
     setMessages((old) => [
       ...old,
       {
@@ -362,13 +427,21 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({
           question: input,
           conversation_id: conversationId,
+          request_id: requestId,
           document_ids: selected,
           answer_mode: localOnly ? "extractive" : "auto",
+          model_id: modelId,
         }),
         signal: controller.signal,
       });
       await readEvents(response, (type, data) => {
-        if (type === "start") setConversationId(data.conversation_id as string);
+        if (type === "start") {
+          const nextId = data.conversation_id as string;
+          setConversationId(nextId);
+          try {
+            window.localStorage.setItem("folio.conversation-id", nextId);
+          } catch {}
+        }
         if (type === "sources")
           update({
             citations: data.citations as Citation[],
@@ -377,6 +450,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             mode: data.mode as string,
             warning: data.warning as string,
             retrieval_mode: data.retrieval_mode as string,
+            model: data.model as string,
           });
         if (type === "replace") {
           content = data.content as string;
@@ -399,6 +473,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             mode: data.mode as string,
             warning: data.warning as string,
             retrieval_mode: data.retrieval_mode as string,
+            model: data.model as string,
           });
       });
     } catch (e) {
@@ -522,9 +597,11 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
               >
                 <Upload size={25} />
                 <strong>
-                  {uploading ? "正在上传文档…" : "点击上传，或拖入 PDF 文档"}
+                  {uploading ? "正在上传文档…" : "点击上传，或拖入文档 / 图片"}
                 </strong>
-                <span>文字型 PDF · 单份最大 50 MB · 自动去重</span>
+                <span>
+                  PDF / TXT / MD / DOCX / CSV / XLSX / 图片 · 最大 50 MB
+                </span>
               </button>
               <label className="local-mode">
                 <input
@@ -544,7 +621,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         <strong>{shortName(d.name)}</strong>
                         <small>
                           {d.status === "ready"
-                            ? `${d.pages} 页 · ${d.chunks} 个片段 · ${fileSize(d.size)} · ${d.vector_ready ? "混合检索" : "关键词检索"}`
+                            ? `${d.pages} 页 / 节 · ${d.chunks} 个片段 · ${fileSize(d.size)} · ${d.vector_ready ? "混合检索" : "关键词检索"}`
                             : d.status === "error"
                               ? "解析失败"
                               : d.status === "archived"
@@ -552,6 +629,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                                 : `解析入库中 · ${d.progress}%`}
                         </small>
                         {d.error && <p>{d.error}</p>}
+                        {d.chunks > 0 && <ParseReport document={d} />}
                         {versions[d.id] && (
                           <div className="version-list">
                             {versions[d.id].map((v) => (
@@ -652,21 +730,46 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             <div className="settings-content">
               <div className="connection-card">
                 <span
-                  className={`status-dot ${health?.generation_ready ? "green" : ""}`}
+                  className={`status-dot ${currentModel?.ready ? "green" : ""}`}
                 />
                 <div>
-                  <strong>
-                    {health?.generation_ready
-                      ? "生成式问答已配置"
-                      : "当前使用原文检索模式"}
-                  </strong>
+                  <strong>当前回答模型</strong>
                   <p>
-                    {health?.generation_ready
-                      ? `回答模型：${health.model}`
-                      : "无需密钥即可查找手册原文；连接模型后，可生成带引用的回答。"}
+                    {currentModel?.label || "正在读取模型配置…"}
+                    {currentModel && currentModel.label !== currentModel.model
+                      ? ` · ${currentModel.model}`
+                      : ""}
                   </p>
+                  <p role="status">
+                    {!health
+                      ? "正在读取配置…"
+                      : currentModel?.ready
+                        ? "已配置 · 尚未验证连接与调用权限"
+                        : "缺少密钥 · 当前仅可检索原文"}
+                  </p>
+                  {localOnly && <p>已开启“仅查原文”，本次不会调用回答模型。</p>}
                 </div>
               </div>
+              <h3>可用回答模型</h3>
+              <Select
+                label="当前回答模型"
+                value={modelId}
+                onChange={chooseModel}
+                options={(health?.models || []).map((model) => ({
+                  value: model.id,
+                  label: `${model.label}${model.ready ? "" : "（未配置密钥）"}`,
+                }))}
+              />
+              <p>
+                通过后端 .env.local 的 LLM_PROFILES
+                配置多个兼容模型，密钥引用环境变量；问答输入区可随时切换。
+              </p>
+              <h3>本地 OCR</h3>
+              <p>
+                {health?.ocr?.available
+                  ? `已检测到 ${health.ocr.engine}，扫描 PDF 和图片会自动识别。`
+                  : "尚未安装 OCR 引擎。请安装 Tesseract 与中英文语言包，或使用 Docker。"}
+              </p>
               <h3>连接你的模型</h3>
               <p>
                 在项目根目录打开 <code>.env.local</code>，填入智谱 GLM
@@ -677,10 +780,15 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   "ZHIPU_API_KEY=你的智谱密钥\nLLM_MODEL=glm-4.7\nEMBEDDING_MODEL=embedding-3"
                 }
               </pre>
-              <h3>可选：启用向量检索</h3>
+              <h3>向量模型（独立配置）</h3>
               <p>
-                填写智谱密钥后会启用
-                embedding-3。重启后端，再对已有文档执行“向量重建”；也可通过环境变量切换其他兼容服务。
+                {health?.embedding_model || "未配置向量模型"} ·{" "}
+                {health?.embedding_ready
+                  ? "已配置，尚未验证连接与额度"
+                  : "未配置密钥，使用关键词检索"}
+              </p>
+              <p>
+                切换回答模型不会改变向量模型。更换向量模型后，需对已有文档执行“向量重建”。
               </p>
               <div className="settings-foot">
                 <ShieldCheck size={16} />
@@ -693,7 +801,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
               {[
                 {
                   title: "01  连接你的知识",
-                  text: "上传文字型 PDF，系统自动提取文本并建立检索片段。扫描件需要先进行 OCR。",
+                  text: "上传文档或图片，系统自动解析；扫描 PDF 与图片在本地 OCR，并生成解析检查报告。",
                 },
                 {
                   title: "02  用自然语言提问",
@@ -710,8 +818,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 </div>
               ))}
               <p className="help-note">
-                当前版本面向本机单人使用。未配置模型时仅展示检索原文；扫描件
-                OCR、人工客服与业务办理不在本版范围内。
+                当前版本面向本机单人使用。未配置模型时仅展示检索原文； 需核对
+                OCR 识别内容；人工客服与业务办理不在本版范围内。
               </p>
             </div>
           )}
@@ -727,12 +835,12 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       <input
         ref={fileInput}
         type="file"
-        accept="application/pdf,.pdf"
+        accept=".pdf,.txt,.md,.docx,.csv,.xlsx,.png,.jpg,.jpeg,.webp"
         multiple
         className="sr-only"
         tabIndex={-1}
         aria-hidden="true"
-        aria-label="上传 PDF 文件"
+        aria-label="上传文档或图片"
         onChange={(e) => void upload(e.target.files)}
       />
       {compact && mobileNavOpen && (
@@ -864,7 +972,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             <Settings2 size={16} />
             模型与设置
             <span
-              className={`status-dot ${health?.generation_ready ? "green" : ""}`}
+              className={`status-dot ${currentModel?.ready ? "green" : ""}`}
             />
           </button>
           <button className="help-button" onClick={() => openPanel("help")}>
@@ -1048,8 +1156,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                       </strong>
                       <span>
                         {scope.length
-                          ? `共 ${scope.reduce((n, d) => n + d.pages, 0)} 页内容 · 随时可检索`
-                          : "支持文字型 PDF · 单份最大 50 MB"}
+                          ? `共 ${scope.reduce((n, d) => n + d.pages, 0)} 页 / 节内容 · 随时可检索`
+                          : "支持 PDF、Word、表格、文本及图片 · 最大 50 MB"}
                       </span>
                     </div>
                     {scope.length ? (
@@ -1116,6 +1224,12 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                       <div className="message-body">
                         <div className="message-author">
                           {m.role === "assistant" ? "Folio" : "你"}
+                          {m.role === "user" && m.status === "interrupted" && (
+                            <span>上次回答中断，可重新提问</span>
+                          )}
+                          {m.role === "user" && m.status === "pending" && (
+                            <span>回答处理中</span>
+                          )}
                           {m.role === "assistant" && (
                             <span>
                               {m.mode === "error"
@@ -1128,7 +1242,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                                       ? `已发布标准答案 · v${m.approved_knowledge?.revision ?? ""}`
                                       : m.mode === "no_evidence"
                                         ? "资料不足"
-                                        : "原文检索"}
+                                        : m.mode === "clarification"
+                                          ? "需要澄清"
+                                          : "原文检索"}
                             </span>
                           )}
                         </div>
@@ -1183,7 +1299,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         ) : (
                           <div className="thinking">
                             <LoaderCircle size={15} className="spin" />
-                            正在查找相关资料<span>…</span>
+                            正在检索资料并核对回答<span>…</span>
                           </div>
                         )}
                         {m.warning && (
@@ -1216,7 +1332,14 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                                   ? `直接采用审核版本 v${m.approved_knowledge?.revision ?? ""} · 未重新生成`
                                   : m.mode === "generated"
                                     ? "请结合引用原文核对"
-                                    : "基于知识库原文"}
+                                    : m.mode === "clarification"
+                                      ? "请补充产品或适用条件后继续提问"
+                                      : m.mode === "no_evidence"
+                                        ? "当前资料不足，请补充文档或问题信息"
+                                        : "基于知识库原文"}
+                              {m.mode === "generated" &&
+                                m.model &&
+                                ` · ${m.model}`}
                               {m.elapsed_ms > 0 &&
                                 ` · ${(m.elapsed_ms / 1000).toFixed(1)}s`}
                             </span>
@@ -1252,7 +1375,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   placeholder={
                     scope.length
                       ? "向你的知识库提问，答案会附上来源…"
-                      : "先上传 PDF 文档，开始知识问答…"
+                      : "先上传文档，开始知识问答…"
                   }
                   value={question}
                   maxLength={2000}
@@ -1280,7 +1403,21 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     />{" "}
                     仅查原文（本地处理）
                   </label>
-                  <div>
+                  <div className="composer-send-controls">
+                    <Select
+                      label="回答模型"
+                      value={modelId}
+                      disabled={busy || localOnly}
+                      onChange={chooseModel}
+                      options={(
+                        health?.models || [
+                          { id: "default", label: "默认模型", ready: false },
+                        ]
+                      ).map((model) => ({
+                        value: model.id,
+                        label: `${model.label}${model.ready ? "" : " · 原文检索"}`,
+                      }))}
+                    />
                     <span className="enter-hint">
                       Enter 发送 · Shift + Enter 换行
                     </span>
@@ -1343,21 +1480,27 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   >
                     ← 全部参考来源
                   </button>
-                  <span className="pdf-label">PDF DOCUMENT</span>
+                  <span className="pdf-label">SOURCE DOCUMENT</span>
                   <h3>{shortName(activeCitation.document_name)}</h3>
                   <div className="source-location">
                     <span>参考 [{activeCitation.id}]</span>
-                    <span>PDF 第 {activeCitation.page} 页</span>
+                    <span>
+                      位置 {activeCitation.page} · {activeCitation.heading}
+                    </span>
                   </div>
                   <div className="source-excerpt">{activeCitation.content}</div>
-                  <button
-                    className="button secondary preview-button"
-                    onClick={() => setShowPreview(!showPreview)}
-                  >
-                    <BookOpen size={14} />
-                    {showPreview ? "收起 PDF 预览" : "查看 PDF 原页"}
-                    <ChevronDown size={13} />
-                  </button>
+                  {(documents.find(
+                    (doc) => doc.id === activeCitation.document_id,
+                  )?.file_type || "pdf") === "pdf" && (
+                    <button
+                      className="button secondary preview-button"
+                      onClick={() => setShowPreview(!showPreview)}
+                    >
+                      <BookOpen size={14} />
+                      {showPreview ? "收起 PDF 预览" : "查看 PDF 原页"}
+                      <ChevronDown size={13} />
+                    </button>
+                  )}
                   {showPreview && (
                     <iframe
                       title={`PDF 第 ${activeCitation.page} 页`}
@@ -1371,7 +1514,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    在新窗口打开原文 <ExternalLink size={12} />
+                    打开 / 下载原文件 <ExternalLink size={12} />
                   </a>
                 </div>
               ) : citations.length ? (
@@ -1394,7 +1537,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         <span className="source-number">
                           {String(c.id).padStart(2, "0")}
                         </span>
-                        <span>PDF · 第 {c.page} 页</span>
+                        <span>
+                          位置 {c.page} · {c.heading}
+                        </span>
                         <ArrowUp size={13} />
                       </div>
                       <h3>{c.heading}</h3>
@@ -1424,7 +1569,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     <div className="empty-rule" />
                     <div className="source-feature">
                       <Check size={13} />
-                      精确到页的文档引用
+                      可定位的文档引用
                     </div>
                     <div className="source-feature">
                       <Check size={13} />

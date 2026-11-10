@@ -25,14 +25,14 @@ def test_versions_failure_rollback_archive(monkeypatch,version_document):
     with TestClient(app) as client:
         def broken(*_):
             raise ValueError('解析失败测试')
-        monkeypatch.setattr(ingestion,'parse_pdf',broken)
+        monkeypatch.setattr(ingestion,'parse_document',broken)
         assert not asyncio.run(ingestion.ingest(docid,'text'))
         with Session() as session:
             doc=session.get(Document,docid)
             assert doc.status=='ready' and doc.active_revision==0 and doc.embedding_signature=='old-model'
             assert '旧索引' in doc.error
             assert session.scalar(select(Chunk).where(Chunk.document_id==doc.id)).embedding==[1.,0.]
-        monkeypatch.setattr(ingestion,'parse_pdf',lambda *_:(1,[dict(page=1,ordinal=0,heading='通信地址',content='通信地址默认2，范围1-255。',context='',kind='table_row',group_key='p1t1')]))
+        monkeypatch.setattr(ingestion,'parse_document',lambda *_:(1,[dict(page=1,ordinal=0,heading='通信地址',content='通信地址默认2，范围1-255。',context='',kind='table_row',group_key='p1t1')],{'status':'passed'}))
         from app.providers import ProviderError
         async def rate_limited(*_):
             raise ProviderError('向量服务调用受限（HTTP 429）')
@@ -108,7 +108,7 @@ def test_queue_restart_resumes_persisted_job(monkeypatch,version_document):
     import time
     from app.db import IndexJob, init_db
     init_db()
-    monkeypatch.setattr(ingestion,'parse_pdf',lambda *_:(1,[dict(page=1,ordinal=0,heading='通信地址',content='通信地址默认3，范围1-255。',context='',kind='table_row',group_key='p1t1')]))
+    monkeypatch.setattr(ingestion,'parse_document',lambda *_:(1,[dict(page=1,ordinal=0,heading='通信地址',content='通信地址默认3，范围1-255。',context='',kind='table_row',group_key='p1t1')],{'status':'passed'}))
     with Session() as session:
         doc=session.get(Document,docid);doc.indexing_status='processing'
         job=IndexJob(document_id=doc.id,mode='text',status='running')

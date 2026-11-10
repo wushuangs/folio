@@ -2778,3 +2778,75 @@ h1 > span {
   font-size: 12px;
   color: var(--green);
 }
+
+.parse-report {
+  margin-top: 8px;
+}
+.parse-report-body {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf3;
+  max-width: 640px;
+}
+.parse-report-body p {
+  font-size: 11px;
+  line-height: 1.8;
+}
+.parse-report-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+}
+.parse-preview-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.parse-preview-controls input {
+  width: 65px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.composer-send-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.composer-send-controls .folio-select {
+  min-width: 120px;
+  max-width: 210px;
+}
+@media (max-width: 700px) {
+  .composer-send-controls .folio-select {
+    min-width: 100px;
+    max-width: 145px;
+  }
+  .composer-bottom {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}
+
+.composer-send-controls .folio-select-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  width: max-content;
+  min-width: max(100%, 180px);
+  max-width: min(320px, calc(100vw - 48px));
+  max-height: min(280px, 50dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 -6px 24px #263b3717;
+}
+.composer-send-controls .folio-select-menu [role="option"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

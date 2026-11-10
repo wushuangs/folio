@@ -1,4 +1,15 @@
+export type ParseQuality = {
+  status: "passed" | "warning";
+  characters: number;
+  chunks: number;
+  ocr_pages: number[];
+  empty_pages: number[];
+  warnings: string[];
+  note: string;
+};
 export type Document = {
+  file_type?: string;
+  quality_report?: ParseQuality;
   id: string;
   name: string;
   size: number;
@@ -13,6 +24,7 @@ export type Document = {
   created_at: string;
 };
 export type Citation = {
+  file_type?: string;
   kind?: string;
   revision?: number;
   id: number;
@@ -25,6 +37,7 @@ export type Citation = {
   score: number;
 };
 export type Message = {
+  model?: string;
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -49,8 +62,11 @@ export type Conversation = {
   document_ids?: string[];
 };
 export type Health = {
+  models?: { id: string; label: string; model: string; ready: boolean }[];
+  ocr?: { available: boolean; engine: string | null };
   generation_ready: boolean;
   embedding_ready: boolean;
+  embedding_model?: string | null;
   model: string | null;
   mode: string;
 };

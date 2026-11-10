@@ -219,7 +219,7 @@ export function KnowledgePublisher({
             setAnswer(e.target.value);
             setConfirmed(false);
           }}
-          placeholder="填写经核对的完整答案，保留适用条件、单位及正确的引用编号。"
+          placeholder="填写经核对的完整答案，保留原文中的限制、单位及正确的引用编号。"
         />
       </label>
       <div className="quality-filter">
@@ -288,7 +288,7 @@ export function KnowledgePublisher({
                     <strong title={c.document_name}>{c.document_name}</strong>
                     <span className="source-choice-meta">
                       <span>来源 [{c.id}]</span>
-                      <span>第 {c.page} 页</span>
+                      <span>位置 {c.page}</span>
                       <span>索引 v{c.revision ?? "未知"}</span>
                       {"source_issue" in c &&
                         typeof c.source_issue === "string" &&
@@ -348,7 +348,7 @@ export function KnowledgePublisher({
           checked={confirmed}
           onChange={(e) => setConfirmed(e.target.checked)}
         />
-        我已核对标准答案、适用条件与所选原文，确认发布为正式知识。
+        我已核对标准答案与所选原文，确认发布为正式知识。
       </label>
       <div
         className={`publication-checklist ${blockers.length ? "" : "ready"}`}

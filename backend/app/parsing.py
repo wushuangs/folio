@@ -4,7 +4,7 @@ from collections import Counter
 
 import pdfplumber
 
-PARSER_VERSION = 'layout-v2'
+PARSER_VERSION = 'multi-v3'
 HEADING = re.compile(r'^(\d{1,2}(?:\.\d+){0,3})\s+(.{2,55})$')
 TOC = re.compile(r'^(\d{1,2}(?:\.\d+){0,3})\s+(.+?)\s*[.．…·]{3,}\s*(\d+)\s*$')
 PAGE_NUMBER = re.compile(r'第\s*\d+\s*页\s*共\s*\d+\s*页|^\s*\d+\s*/\s*\d+\s*$')
@@ -67,7 +67,8 @@ def table_records(table):
     return result
 
 
-def parse_pdf(path, progress=None):
+def parse_pdf(path, progress=None, ocr_pages=None):
+    ocr_pages = ocr_pages if ocr_pages is not None else []
     chunks = []
     try:
         pdf = pdfplumber.open(path)
@@ -101,6 +102,17 @@ def parse_pdf(path, progress=None):
             if progress:
                 progress(total+pno+1,total*2)
             if pno in toc_pages:
+                page.flush_cache()
+                continue
+            if len((page.extract_text() or '').strip()) < 30 and page.images:
+                from .ocr import recognize
+                if page.width * page.height * (160 / 72) ** 2 > 40_000_000:
+                    raise ValueError('PDF 页面尺寸过大，无法安全执行 OCR。')
+                image = page.to_image(resolution=160).original
+                value = recognize(image)
+                ocr_pages.append(pno+1)
+                for part in split_page(value):
+                    chunks.append({'page':pno+1,'ordinal':len(chunks),'heading':heading,'content':part,'kind':'ocr','context':part,'group_key':f'p{pno+1}-ocr{len(chunks)}'})
                 page.flush_cache()
                 continue
             all_lines = page.extract_text_lines() or []
@@ -154,6 +166,6 @@ def parse_pdf(path, progress=None):
                             add(f'{caption}\n{part}'.strip(),'table_row',f'{prefix}\n{siblings}'[:1600],f'p{pno+1}-t{index}-g{rindex//3}')
             flush()
             page.flush_cache()
-    if sum(len(c['content']) for c in chunks)<100:
-        raise ValueError('未提取到足够文字。扫描件请先 OCR 后上传。')
+    if sum(len(c['content']) for c in chunks)<10:
+        raise ValueError('未识别到足够文字，请检查文件内容、图片清晰度与 OCR 语言配置。')
     return total,chunks

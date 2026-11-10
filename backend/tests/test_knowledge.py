@@ -10,7 +10,7 @@ from pypdf import PdfReader, PdfWriter
 from sqlalchemy import select
 
 from app.db import Chunk, Document, Session
-from app.ingestion import split_page
+from app.parsing import split_page
 from app.main import app
 from app.retrieval import lexical_rank, tokens
 
@@ -44,6 +44,7 @@ def test_upload_retrieve_history_and_citations():
     manual = next((Path(__file__).resolve().parents[2]/'downloads').glob('*.pdf'))
     with TestClient(app) as client:
         assert client.get('/api/health').json()['mode'] == 'extractive'
+        before_count=len(client.get('/api/documents').json())
         with manual.open('rb') as file:
             response = client.post('/api/documents',files={'file':(manual.name,file,'application/pdf')})
         assert response.status_code == 202
@@ -58,7 +59,7 @@ def test_upload_retrieve_history_and_citations():
         with manual.open('rb') as file:
             duplicated = client.post('/api/documents',files={'file':(manual.name,file,'application/pdf')})
         assert duplicated.json()['id']==document_id
-        assert len(client.get('/api/documents').json())==1
+        assert len(client.get('/api/documents').json())==before_count+1
         result = parse_events(client.post('/api/chat',json={'question':'RS485 不能正常通信时应该检查什么？','document_ids':[document_id]}))
         assert 'error' not in result
         citations = result['sources']['citations']
@@ -147,7 +148,7 @@ def test_generated_answer_and_provider_error_persistence(monkeypatch):
         result=parse_events(client.post('/api/chat',json={'question':'RS485 故障','document_ids':['generation-fixture']}))
         assert result['done']['mode']=='generated'
         history=client.get(f'/api/conversations/{result["start"]["conversation_id"]}/messages').json()
-        assert history[-1]['content'].startswith('检查 COM 端口设置 [1]。')
+        assert history[-1]['content'].startswith('### 结论') and '检查 COM 端口设置 [1]。' in history[-1]['content']
         assert history[-1]['citations'][0]['page']==1
         async def failed(*_):
             raise ProviderError('测试服务不可用')

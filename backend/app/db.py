@@ -28,6 +28,8 @@ class Document(Base):
     name: Mapped[str] = mapped_column(Text)
     sha256: Mapped[str] = mapped_column(String(64), unique=True)
     size: Mapped[int] = mapped_column(Integer)
+    file_type: Mapped[str] = mapped_column(String(12), default='pdf', server_default='pdf')
+    quality_report: Mapped[dict] = mapped_column(JSON, default=dict, server_default='{}')
     pages: Mapped[int] = mapped_column(Integer, default=0)
     chunks: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default='queued')
@@ -65,6 +67,7 @@ class Revision(Base):
     chunks: Mapped[int] = mapped_column(Integer)
     embedding_signature: Mapped[str] = mapped_column(Text, default='')
     parser_version: Mapped[str] = mapped_column(String(30), default='legacy')
+    quality_report: Mapped[dict] = mapped_column(JSON, default=dict, server_default='{}')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -98,6 +101,7 @@ class Message(Base):
     __tablename__ = 'messages'
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     conversation_id: Mapped[str] = mapped_column(ForeignKey('conversations.id', ondelete='CASCADE'), index=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[list] = mapped_column(JSON, default=list)
@@ -188,9 +192,10 @@ def init_db():
             c.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
     # 兼容已有本地数据库，只添加新字段，不删除原始记录或旧索引。
     additions = {
-        'documents': {'active_revision': "INTEGER NOT NULL DEFAULT 0", 'indexing_status': "VARCHAR(20) NOT NULL DEFAULT 'idle'", 'parser_version': "VARCHAR(30) NOT NULL DEFAULT 'legacy'"},
+        'index_revisions': {'quality_report': "JSON NOT NULL DEFAULT '{}'"},
+        'documents': {'file_type': "VARCHAR(12) NOT NULL DEFAULT 'pdf'", 'quality_report': "JSON NOT NULL DEFAULT '{}'", 'active_revision': "INTEGER NOT NULL DEFAULT 0", 'indexing_status': "VARCHAR(20) NOT NULL DEFAULT 'idle'", 'parser_version': "VARCHAR(30) NOT NULL DEFAULT 'legacy'"},
         'chunks': {'revision': 'INTEGER NOT NULL DEFAULT 0', 'kind': "VARCHAR(20) NOT NULL DEFAULT 'body'", 'context': "TEXT NOT NULL DEFAULT ''", 'group_key': "VARCHAR(80) NOT NULL DEFAULT ''", 'search_terms': "TEXT NOT NULL DEFAULT ''"},
-        'messages': {'request_context': "JSON NOT NULL DEFAULT '{}'", 'status': "VARCHAR(20) NOT NULL DEFAULT 'complete'", 'retrieval_mode': "VARCHAR(20) NOT NULL DEFAULT ''", 'warning': "TEXT NOT NULL DEFAULT ''"},
+        'messages': {'request_id': 'VARCHAR(64)', 'request_context': "JSON NOT NULL DEFAULT '{}'", 'status': "VARCHAR(20) NOT NULL DEFAULT 'complete'", 'retrieval_mode': "VARCHAR(20) NOT NULL DEFAULT ''", 'warning': "TEXT NOT NULL DEFAULT ''"},
         'conversations': {'document_ids': "JSON NOT NULL DEFAULT '[]'"},
     }
     inspector = inspect(engine)
@@ -204,6 +209,7 @@ def init_db():
                     connection.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}'))
     Base.metadata.create_all(engine)
     with engine.begin() as c:
+        c.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS idx_message_request_id ON messages(request_id)'))
         c.execute(text('CREATE INDEX IF NOT EXISTS idx_chunk_revision ON chunks(document_id, revision)'))
         if engine.dialect.name == 'sqlite':
             c.execute(text("CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(chunk_id UNINDEXED, document_id UNINDEXED, terms, tokenize='unicode61')"))

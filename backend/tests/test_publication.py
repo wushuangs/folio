@@ -70,7 +70,7 @@ def test_stale_sources_pause_and_prevent_publication():
         assert client.post(f'/api/feedback/{fid}/publish',json=body(chunk,1)).status_code==409
 
 
-def test_update_versions_and_duplicate_question_conflict():
+def test_update_versions_and_independent_duplicate_questions():
     with TestClient(app) as client:
         doc,mid,chunk=seed()
         fid=client.put(f'/api/messages/{mid}/feedback',json={'rating':'helpful'}).json()['id']
@@ -83,7 +83,7 @@ def test_update_versions_and_duplicate_question_conflict():
             other=Message(conversation_id=original.conversation_id,role='assistant',content='另一次回答',citations=original.citations,request_context=original.request_context)
             session.add(other);session.commit();other_id=other.id
         duplicate=client.put(f'/api/messages/{other_id}/feedback',json={'rating':'helpful'}).json()['id']
-        assert client.post(f'/api/feedback/{duplicate}/publish',json=body(chunk)).status_code==409
+        assert client.post(f'/api/feedback/{duplicate}/publish',json=body(chunk)).status_code==200
         history=client.get(f'/api/feedback/{fid}/publication-history').json()
         assert len(history)==2 and history[0]['snapshot']['answer']==updated['answer']
         assert history[1]['snapshot']['answer']==body(chunk)['answer']

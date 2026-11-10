@@ -110,17 +110,12 @@ def publish(feedback_id: str, body: PublishInput):
             doc=session.get(Document,old['document_id'])
             if not chunk or not doc or chunk.document_id != doc.id or doc.status!='ready' or chunk.revision!=doc.active_revision or old.get('revision') != doc.active_revision:
                 raise HTTPException(409,'来源版本已变化或文档已归档，请重新检索验证并选择最新原文。')
-            sources.append({'id':old['id'],'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,
+            sources.append({'id':old['id'],'chunk_id':chunk.id,'document_id':doc.id,'document_name':doc.name,'file_type':doc.file_type,
                             'page':chunk.page,'revision':chunk.revision,'heading':chunk.heading,'content':chunk.context or chunk.content})
         used={int(n) for n in re.findall(r'\[(\d+)\]',body.answer)}
         if used - {s['id'] for s in sources}:
             missing = sorted(used - {s['id'] for s in sources})
             raise HTTPException(422,'标准答案仍引用 '+ '、'.join(f'[{n}]' for n in missing) +'，但未勾选这些来源。请补选对应依据，或修改答案中的引用编号；不同来源组的编号不能混用。')
-        from .text import normalize
-        source_scope={source['document_id'] for source in sources}
-        for existing in session.scalars(select(PublishedKnowledge).where(PublishedKnowledge.status=='published',PublishedKnowledge.feedback_id!=feedback_id)):
-            if normalize(existing.question)==normalize(body.question.strip()) and source_scope & {source['document_id'] for source in existing.sources}:
-                raise HTTPException(409,'该文档范围内已有同一标准问题，请先编辑或撤回已有正式知识，避免答案冲突。')
         row=session.scalar(select(PublishedKnowledge).where(PublishedKnowledge.feedback_id==feedback_id).with_for_update())
         if (row.revision if row else 0)!=body.expected_revision:
             raise HTTPException(409,'发布版本已变化，请刷新后重新审核。')
@@ -185,7 +180,7 @@ def publication_history(feedback_id: str):
 
 
 def retrieve_approved(question, document_ids, limit=2):
-    from .text import normalize, tokens, GENERIC
+    from .text import tokens, GENERIC
     from .retrieval import lexical_rank
     with Session() as session:
         rows=list(session.scalars(select(PublishedKnowledge).where(PublishedKnowledge.status=='published')))
@@ -195,7 +190,7 @@ def retrieve_approved(question, document_ids, limit=2):
         for row in rows:
             terms=set(tokens(row.question))-GENERIC
             overlap=len(query_terms & terms)/max(1,len(query_terms))
-            if normalize(question)==normalize(row.question) or (overlap>=.7 and len(query_terms & terms)>=2):
+            if question_key(question)==question_key(row.question) or (overlap>=.7 and len(query_terms & terms)>=2):
                 candidates.append(row)
         ranked=lexical_rank(question,[SimpleNamespace(heading=row.question,content=row.answer) for row in candidates])
         hits=[]
@@ -211,7 +206,7 @@ def retrieve_approved(question, document_ids, limit=2):
             for source_index,source in enumerate(row.sources):
                 content=('人工审核标准答案：\n'+clean if source_index==0 else '人工审核标准答案的补充来源')+'\n原文依据：\n'+source['content'][:450]
                 hits.append({'id':len(hits)+1,'chunk_id':source['chunk_id'],'document_id':source['document_id'],
-                             'document_name':source['document_name'],'page':source['page'],'revision':source['revision'],
+                             'document_name':source['document_name'],'file_type':source.get('file_type','pdf'),'page':source['page'],'revision':source['revision'],
                              'heading':'已审核问答 · '+row.question,'content':content,
                              'matched_content':clean if source_index==0 else source['content'][:450],'kind':'approved_qa','score':score,
                              'knowledge_id':row.id,'knowledge_revision':row.revision,'source_references':row.sources})
@@ -226,22 +221,55 @@ def approved_knowledge():
 
 
 def exact_approved_answer(question, document_ids):
-    from .text import normalize
-    def key(value):
-        return re.sub(r'\s+', '', re.sub(r'[?！!。？]+$', '', normalize(value).strip()))
     with Session() as session:
         matches=[]
         for row in session.scalars(select(PublishedKnowledge).where(PublishedKnowledge.status=='published')):
-            if key(question)!=key(row.question):
+            if question_key(question)!=question_key(row.question):
                 continue
             if document_ids and not {source['document_id'] for source in row.sources}.issubset(set(document_ids)):
                 continue
             if active_sources(session,row.sources):
                 matches.append(row)
-        # 多个产品存在同名问题时，不直接选择其中一个产品的答案。
+        # 只有唯一标准问题匹配时直接采用审核版本，其余交回普通检索。
         if len(matches)!=1:
             return None
         row=matches[0]
         metadata={'id':row.id,'revision':row.revision,'question':row.question,'feedback_id':row.feedback_id}
         citations=[dict(source,kind='approved_qa',score=1.0,knowledge_id=row.id,knowledge_revision=row.revision) for source in row.sources]
         return {'answer':row.answer,'citations':citations,'metadata':metadata}
+
+
+def question_key(value):
+    from .text import normalize
+    return re.sub(r'\s+', '', re.sub(r'[?！!。？]+$', '', normalize(value).strip()))
+
+
+
+class BatchWithdrawInput(BaseModel):
+    items: list[dict[str,int|str]] = Field(min_length=1,max_length=100)
+    reason: str = Field(min_length=1,max_length=2000)
+
+
+@router.post('/knowledge/approved/batch-withdraw')
+@serialized_publication
+def batch_withdraw(body: BatchWithdrawInput):
+    if not body.reason.strip():raise HTTPException(422,'请填写批量撤回原因。')
+    with Session() as session:
+        checked=[]
+        seen=set()
+        for item in body.items:
+            identifier=item.get('id')
+            if not isinstance(identifier,str) or identifier in seen:raise HTTPException(422,'知识 ID 无效或重复。')
+            seen.add(identifier)
+            row=session.get(PublishedKnowledge,identifier)
+            if not row or row.status!='published' or row.revision!=item.get('revision'):
+                raise HTTPException(409,'部分知识状态或版本已变化，本批次未执行，请刷新。')
+            checked.append(row)
+        for row in checked:
+            row.status,row.revision,row.review_note,row.updated_at='withdrawn',row.revision+1,body.reason.strip(),now()
+            feedback=session.get(AnswerFeedback,row.feedback_id)
+            feedback.status,feedback.resolution,feedback.updated_at='in_progress',body.reason.strip(),now()
+            session.flush()
+            session.add(PublicationEvent(knowledge_id=row.id,action='withdraw',snapshot=serialize_knowledge(session,row)))
+        session.commit()
+        return {'updated':len(checked)}
