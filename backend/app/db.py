@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event, inspect, select, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, event, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from .config import DATABASE_URL
@@ -56,6 +56,36 @@ class Chunk(Base):
     context: Mapped[str] = mapped_column(Text, default='', server_default='')
     group_key: Mapped[str] = mapped_column(String(80), default='', server_default='')
     search_terms: Mapped[str] = mapped_column(Text, default='', server_default='')
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+
+
+class ChunkEdit(Base):
+    __tablename__ = 'chunk_edits'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey('documents.id', ondelete='CASCADE'), index=True)
+    old_chunk_id: Mapped[str] = mapped_column(String(32))
+    new_chunk_id: Mapped[str] = mapped_column(String(32))
+    from_revision: Mapped[int] = mapped_column(Integer)
+    to_revision: Mapped[int] = mapped_column(Integer)
+    old_content: Mapped[str] = mapped_column(Text)
+    new_content: Mapped[str] = mapped_column(Text)
+    old_enabled: Mapped[bool] = mapped_column(Boolean)
+    new_enabled: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class SyncBinding(Base):
+    __tablename__ = 'sync_bindings'
+    relative_path: Mapped[str] = mapped_column(Text, primary_key=True)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey('documents.id'), nullable=True)
+    pending_document_id: Mapped[str | None] = mapped_column(ForeignKey('documents.id'), nullable=True)
+    previous_document_id: Mapped[str | None] = mapped_column(ForeignKey('documents.id'), nullable=True)
+    observed_sha256: Mapped[str] = mapped_column(String(64))
+    owned: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+    pending_owned: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+    previous_owned: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class Revision(Base):
@@ -94,7 +124,23 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default='open')
     document_ids: Mapped[list] = mapped_column(JSON, default=list, server_default='[]')
+    app_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class KnowledgeApp(Base):
+    __tablename__ = 'knowledge_apps'
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(Text)
+    document_ids: Mapped[list] = mapped_column(JSON, default=list)
+    model_id: Mapped[str] = mapped_column(String(64), default='default')
+    answer_mode: Mapped[str] = mapped_column(String(16), default='auto')
+    retrieval: Mapped[str] = mapped_column(String(16), default='auto')
+    key_hash: Mapped[str] = mapped_column(String(64))
+    key_prefix: Mapped[str] = mapped_column(String(16))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class Message(Base):
@@ -181,7 +227,7 @@ def sync_fts(session, document_id):
     doc = session.get(Document, document_id)
     if not doc or doc.status == 'archived':
         return
-    rows = session.query(Chunk).filter(Chunk.document_id == document_id, Chunk.revision == doc.active_revision).all()
+    rows = session.query(Chunk).filter(Chunk.document_id == document_id, Chunk.revision == doc.active_revision, Chunk.enabled.is_(True)).all()
     session.execute(text('INSERT INTO chunk_fts(chunk_id,document_id,terms) VALUES(:chunk_id,:document_id,:terms)'),
                     [{'chunk_id': c.id, 'document_id': document_id, 'terms': c.search_terms} for c in rows]) if rows else None
 
@@ -194,9 +240,9 @@ def init_db():
     additions = {
         'index_revisions': {'quality_report': "JSON NOT NULL DEFAULT '{}'"},
         'documents': {'file_type': "VARCHAR(12) NOT NULL DEFAULT 'pdf'", 'quality_report': "JSON NOT NULL DEFAULT '{}'", 'active_revision': "INTEGER NOT NULL DEFAULT 0", 'indexing_status': "VARCHAR(20) NOT NULL DEFAULT 'idle'", 'parser_version': "VARCHAR(30) NOT NULL DEFAULT 'legacy'"},
-        'chunks': {'revision': 'INTEGER NOT NULL DEFAULT 0', 'kind': "VARCHAR(20) NOT NULL DEFAULT 'body'", 'context': "TEXT NOT NULL DEFAULT ''", 'group_key': "VARCHAR(80) NOT NULL DEFAULT ''", 'search_terms': "TEXT NOT NULL DEFAULT ''"},
+        'chunks': {'revision': 'INTEGER NOT NULL DEFAULT 0', 'kind': "VARCHAR(20) NOT NULL DEFAULT 'body'", 'context': "TEXT NOT NULL DEFAULT ''", 'group_key': "VARCHAR(80) NOT NULL DEFAULT ''", 'search_terms': "TEXT NOT NULL DEFAULT ''", 'enabled': "BOOLEAN NOT NULL DEFAULT TRUE"},
         'messages': {'request_id': 'VARCHAR(64)', 'request_context': "JSON NOT NULL DEFAULT '{}'", 'status': "VARCHAR(20) NOT NULL DEFAULT 'complete'", 'retrieval_mode': "VARCHAR(20) NOT NULL DEFAULT ''", 'warning': "TEXT NOT NULL DEFAULT ''"},
-        'conversations': {'document_ids': "JSON NOT NULL DEFAULT '[]'"},
+        'conversations': {'document_ids': "JSON NOT NULL DEFAULT '[]'", 'app_id': "VARCHAR(32)"},
     }
     inspector = inspect(engine)
     with engine.begin() as connection:
@@ -211,6 +257,7 @@ def init_db():
     with engine.begin() as c:
         c.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS idx_message_request_id ON messages(request_id)'))
         c.execute(text('CREATE INDEX IF NOT EXISTS idx_chunk_revision ON chunks(document_id, revision)'))
+        c.execute(text('CREATE INDEX IF NOT EXISTS idx_conversation_app ON conversations(app_id)'))
         if engine.dialect.name == 'sqlite':
             c.execute(text("CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(chunk_id UNINDEXED, document_id UNINDEXED, terms, tokenize='unicode61')"))
         else:

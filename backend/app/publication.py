@@ -31,7 +31,7 @@ def active_sources(session, sources):
     for source in sources:
         doc = session.get(Document, source['document_id'])
         chunk = session.get(Chunk, source['chunk_id'])
-        if not doc or doc.status != 'ready' or not chunk or chunk.document_id != doc.id or chunk.revision != doc.active_revision or source.get('revision') != doc.active_revision:
+        if not doc or doc.status != 'ready' or not chunk or not chunk.enabled or chunk.document_id != doc.id or chunk.revision != doc.active_revision or source.get('revision') != doc.active_revision:
             return False
     return True
 

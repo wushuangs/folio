@@ -27,6 +27,10 @@ async function proxy(
     const value = request.headers.get(key);
     if (value) headers.set(key, value);
   }
+  if (path[0] === "integrations") {
+    const authorization = request.headers.get("authorization");
+    if (authorization) headers.set("authorization", authorization);
+  }
   const maximum = 52 * 1024 * 1024;
   let tooLarge = false;
   if (Number(request.headers.get("content-length") || 0) > maximum)
@@ -94,4 +98,5 @@ export const POST = proxy;
 export const DELETE = proxy;
 
 export const PUT = proxy;
+
 export const PATCH = proxy;

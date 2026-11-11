@@ -8,14 +8,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from .config import UPLOADS, embedding_signature, settings, public_models, resolve_model
-from .db import Chunk, Conversation, Document, IndexJob, Message, Revision, Session, init_db, sync_fts, uid
+from .db import Chunk, Conversation, Document, IndexJob, Message, Revision, Session, SyncBinding, init_db, sync_fts, uid
 from .ingestion import enqueue, worker
 from .documents import FORMATS, source_path, validate_file
 from .ocr import capabilities as ocr_capabilities
@@ -101,6 +101,10 @@ from .suggestions import router as suggestions_router
 app.include_router(suggestions_router)
 from .publication import router as publication_router
 app.include_router(publication_router)
+from .chunk_edit import router as chunk_edit_router
+app.include_router(chunk_edit_router)
+from .local_sync import router as local_sync_router
+app.include_router(local_sync_router)
 
 
 def serialize_doc(doc):
@@ -191,6 +195,9 @@ def reindex(document_id:str,body:ReindexRequest=ReindexRequest()):
         doc=session.get(Document,document_id)
         if not doc or doc.status=='archived':
             raise HTTPException(404,'文档不存在。')
+        if session.scalar(select(SyncBinding.relative_path).where(
+            SyncBinding.document_id==document_id,SyncBinding.pending_document_id.is_not(None))):
+            raise HTTPException(409,'本地目录中的新版本正在建立索引，请等待同步完成。')
     try:
         jobid=enqueue(document_id,body.mode)
     except ValueError as exc:
@@ -255,7 +262,7 @@ def restore(document_id:str):
 
 
 @app.get('/api/documents/{document_id}/chunks')
-def preview_chunks(document_id:str,page:int=0):
+def preview_chunks(document_id:str,page:int=0,offset:int=Query(default=0,ge=0)):
     with Session() as session:
         doc=session.get(Document,document_id)
         if not doc:
@@ -263,7 +270,8 @@ def preview_chunks(document_id:str,page:int=0):
         statement=select(Chunk).where(Chunk.document_id==doc.id,Chunk.revision==doc.active_revision)
         if page:
             statement=statement.where(Chunk.page==page)
-        return [{'id':c.id,'page':c.page,'heading':c.heading,'kind':c.kind,'content':c.content} for c in session.scalars(statement.order_by(Chunk.ordinal).limit(30))]
+        return [{'id':c.id,'page':c.page,'heading':c.heading,'kind':c.kind,'content':c.content,
+                 'enabled':c.enabled,'revision':c.revision} for c in session.scalars(statement.order_by(Chunk.ordinal).offset(offset).limit(30))]
 
 
 @app.get('/api/documents/{document_id}/file')
@@ -315,13 +323,14 @@ async def retrieval_diagnosis(request:RetrievalDiagnosisRequest):
 @app.get('/api/conversations')
 def conversations():
     with Session() as session:
-        return [{'id':c.id,'title':c.title,'created_at':c.created_at,'document_ids':c.document_ids} for c in session.scalars(select(Conversation).order_by(Conversation.created_at.desc()).limit(100))]
+        return [{'id':c.id,'title':c.title,'created_at':c.created_at,'document_ids':c.document_ids} for c in session.scalars(select(Conversation).where(Conversation.app_id.is_(None)).order_by(Conversation.created_at.desc()).limit(100))]
 
 
 @app.get('/api/conversations/{conversation_id}/messages')
 def messages(conversation_id:str):
     with Session() as session:
-        if not session.get(Conversation,conversation_id):
+        conversation=session.get(Conversation,conversation_id)
+        if not conversation or conversation.app_id is not None:
             raise HTTPException(404,'会话不存在。')
         return [serialize_message(m) for m in session.scalars(select(Message).where(Message.conversation_id==conversation_id).order_by(Message.created_at,Message.id))]
 
@@ -364,6 +373,10 @@ def finalize_answer(answer,citations):
 
 @app.post('/api/chat')
 async def chat(request:Question):
+    return await run_chat(request,None)
+
+
+async def run_chat(request:Question,app_id:str|None):
     question=request.question.strip()
     if not question:
         raise HTTPException(400,'请输入问题。')
@@ -381,7 +394,7 @@ async def chat(request:Question):
         history=[]
         if request.conversation_id:
             conversation=session.get(Conversation,request.conversation_id)
-            if not conversation:
+            if not conversation or conversation.app_id!=app_id:
                 raise HTTPException(404,'会话不存在。')
             claimed=session.execute(update(Conversation).where(Conversation.id==conversation.id,Conversation.status!='generating').values(status='generating'))
             if not claimed.rowcount:
@@ -389,7 +402,7 @@ async def chat(request:Question):
             previous=list(session.scalars(select(Message).where(Message.conversation_id==conversation.id).order_by(Message.created_at.desc(),Message.id.desc()).limit(40)))[::-1]
             history=select_history(previous,request.document_ids)
         else:
-            conversation=Conversation(title=question[:40],status='generating')
+            conversation=Conversation(title=question[:40],status='generating',app_id=app_id)
             session.add(conversation);session.flush()
         conversation.document_ids=list(dict.fromkeys(request.document_ids))
         cid=conversation.id
@@ -465,3 +478,7 @@ async def chat(request:Question):
             with Session() as session:
                 session.execute(update(Conversation).where(Conversation.id==cid).values(status='open'));session.commit()
     return StreamingResponse(generate(),media_type='text/event-stream',headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+
+
+from .integrations import router as integrations_router
+app.include_router(integrations_router)

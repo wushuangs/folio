@@ -23,6 +23,8 @@ from evaluate_local import normalize
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['local', 'live'], default='local')
+    parser.add_argument('--retrieval',choices=['keyword','hybrid'],
+                        help='独立指定检索方式；local + hybrid 只调用向量服务，不调用回答模型')
     parser.add_argument('--questions', type=Path, default=ROOT/'evaluation/questions-v1.json')
     parser.add_argument('--reviews', type=Path, help='人工审核结果 JSON，按题目 ID 映射四项布尔结论')
     parser.add_argument('--output', type=Path)
@@ -30,6 +32,7 @@ async def main():
     args = parser.parse_args()
     if args.limit < 0:
         parser.error('--limit must be nonnegative')
+    retrieval_mode=args.retrieval or ('hybrid' if args.mode=='live' else 'keyword')
     raw = args.questions.read_bytes()
     questions = json.loads(raw)
     if not isinstance(questions,list) or not questions:
@@ -88,12 +91,12 @@ async def main():
                 query = rewrite_query(q['question'], q.get('history', []))
                 exact=exact_approved_answer(q['question'],document_ids)
                 hits,mode,warning=(exact['citations'],'approved','') if args.mode=='live' and exact else await retrieve(
-                    query,document_ids,allow_remote=args.mode=='live')
+                    query,document_ids,allow_remote=retrieval_mode=='hybrid')
                 text = '\n'.join(h['heading']+'\n'+h['content'] for h in hits)
                 rank=next((i for i,hit in enumerate(hits,1)
                            if hit['chunk_id'] in expected_chunks or
                            (expected_pages and hit['page'] in expected_pages and len(document_ids)==1)),None)
-                row.update(query=query, answer_path='published_exact' if exact else 'retrieval',
+                row.update(query=query, answer_path='published_exact' if mode=='approved' else 'retrieval',
                            hits=hits, retrieval_mode=mode, warning=warning,
                            first_relevant_rank=rank if positive else None,
                            hit1=rank==1 if positive else None,
@@ -145,7 +148,8 @@ async def main():
                'note':'答案正确率只统计四项均经人工审核的题目。当前模型流未提供用量数据，报告仅记录上下文和回答字符数，不将其冒充 token。'}
     output = args.output or ROOT/'output/quality'/f'{args.mode}-{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")}.json'
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps({'mode': args.mode, 'questions_sha256': hashlib.sha256(raw).hexdigest(),
+    output.write_text(json.dumps({'mode': args.mode,'requested_retrieval':retrieval_mode,
+                                  'questions_sha256': hashlib.sha256(raw).hexdigest(),
                                   'documents': manifests, 'models': {'generation': config['llm_model'], 'embedding': config['embedding_model']},
                                   'summary': summary, 'results': results}, ensure_ascii=False, indent=2))
     print(json.dumps(summary, ensure_ascii=False))

@@ -127,12 +127,16 @@ async def worker(stop):
             try:
                 success=await ingest(doc_id,mode)
                 with Session() as session:
+                    from .local_sync import finalize_pending
                     job=session.get(IndexJob,job_id)
                     doc=session.get(Document,doc_id)
                     job.status='succeeded' if success else 'failed'
                     job.error=doc.error if doc else '文档不存在。'
                     job.finished_at=now()
+                    sync_changed=finalize_pending(session,doc_id,success)
                     session.commit()
+                if sync_changed:
+                    _invalidate()
             except asyncio.CancelledError:
                 with Session() as session:
                     job=session.get(IndexJob,job_id)

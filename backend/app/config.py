@@ -13,6 +13,14 @@ UPLOADS.mkdir(exist_ok=True)
 DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{DATA / "knowledge.db"}')
 
 
+def local_sync_root():
+    value=os.getenv('LOCAL_SYNC_DIR','').strip()
+    if not value:
+        return None
+    path=Path(value).expanduser()
+    return (path if path.is_absolute() else ROOT/path).resolve()
+
+
 def settings():
     zhipu_key = os.getenv('ZHIPU_API_KEY', '')
     llm_url = os.getenv('LLM_BASE_URL', 'https://open.bigmodel.cn/api/paas/v4').rstrip('/')

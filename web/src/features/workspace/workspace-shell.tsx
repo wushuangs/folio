@@ -30,8 +30,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSuggestions } from "../knowledge/use-suggestions";
 import { Select } from "./select";
+import { ApplicationsPanel } from "./applications-panel";
 import { ParseReport } from "../knowledge/parse-report";
 import { RetrievalDiagnostics } from "../knowledge/retrieval-diagnostics";
+import { LocalSync } from "../knowledge/local-sync";
 import { PublishedKnowledgeList } from "../quality/published-knowledge-list";
 import { AnswerFeedback } from "../quality/answer-feedback";
 import { api, readEvents } from "../knowledge/api";
@@ -605,6 +607,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 </span>
               </button>
               {embedded && <RetrievalDiagnostics documents={documents} />}
+              {embedded && <LocalSync onChanged={refresh} />}
               <label className="local-mode">
                 <input
                   type="checkbox"
@@ -631,7 +634,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                                 : `解析入库中 · ${d.progress}%`}
                         </small>
                         {d.error && <p>{d.error}</p>}
-                        {d.chunks > 0 && <ParseReport document={d} />}
+                        {d.chunks > 0 && <ParseReport document={d} onChanged={refresh} />}
                         {versions[d.id] && (
                           <div className="version-list">
                             {versions[d.id].map((v) => (
@@ -794,8 +797,12 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
               </p>
               <div className="settings-foot">
                 <ShieldCheck size={16} />
-                密钥仅在后端读取，不会返回到浏览器。
+                模型服务密钥仅在后端读取，不会返回到浏览器。
               </div>
+              <ApplicationsPanel
+                documents={documents}
+                models={health?.models || []}
+              />
             </div>
           )}
           {panelMode === "help" && (

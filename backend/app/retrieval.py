@@ -28,7 +28,7 @@ def invalidate_cache():
 @lru_cache(maxsize=16)
 def _corpus(document_ids, epoch):
     with Session() as session:
-        query=select(Chunk,Document).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision).options(load_only(Chunk.id,Chunk.document_id,Chunk.page,Chunk.ordinal,Chunk.heading,Chunk.content,Chunk.kind,Chunk.context,Chunk.group_key,Chunk.search_terms,Chunk.revision))
+        query=select(Chunk,Document).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision,Chunk.enabled.is_(True)).options(load_only(Chunk.id,Chunk.document_id,Chunk.page,Chunk.ordinal,Chunk.heading,Chunk.content,Chunk.kind,Chunk.context,Chunk.group_key,Chunk.search_terms,Chunk.revision))
         if document_ids:
             query=query.where(Document.id.in_(document_ids))
         return tuple(session.execute(query).all())
@@ -90,7 +90,7 @@ def _fts_candidates(question,document_ids):
         expression=' | '.join("'"+term.replace("'","''")+"'" for term in terms)
         query=func.to_tsquery('simple',expression)
         score=func.ts_rank_cd(func.to_tsvector('simple',Chunk.search_terms),query)
-        statement=select(Chunk.id).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision,func.to_tsvector('simple',Chunk.search_terms).op('@@')(query))
+        statement=select(Chunk.id).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision,Chunk.enabled.is_(True),func.to_tsvector('simple',Chunk.search_terms).op('@@')(query))
         if document_ids:
             statement=statement.where(Document.id.in_(document_ids))
         return list(session.scalars(statement.order_by(score.desc()).limit(80)))
@@ -105,7 +105,7 @@ def _vector_candidates(vector,document_ids,signature):
         else:
             similarity=func.vector_cosine(Chunk.embedding,json.dumps(vector))
             conditions=[]
-        statement=select(Chunk.id,similarity.label('similarity')).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision,Document.embedding_signature==signature,Chunk.embedding.is_not(None),*conditions)
+        statement=select(Chunk.id,similarity.label('similarity')).join(Document).where(Document.status=='ready',Chunk.revision==Document.active_revision,Chunk.enabled.is_(True),Document.embedding_signature==signature,Chunk.embedding.is_not(None),*conditions)
         if document_ids:
             statement=statement.where(Document.id.in_(document_ids))
         return list(session.execute(statement.order_by(similarity.desc()).limit(32)))
